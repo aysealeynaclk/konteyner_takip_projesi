@@ -9,6 +9,7 @@ LLM entegrasyonu bir sonraki adımda bu fonksiyonların üzerine eklenecek.
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
+import re
 from datetime import datetime
 from pathlib import Path
 import jwt
@@ -42,8 +43,9 @@ ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 8
 
 
-def create_token(username: str, is_admin: bool):
+def create_token(username: str, user_id: int, is_admin: bool):
     payload = {
+        "uid": user_id,
         "sub": username,
         "is_admin": is_admin,
         "exp": datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS),
@@ -81,7 +83,7 @@ class LoginRequest(BaseModel):
 def login(request: LoginRequest):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT username, password_hash, is_admin FROM users WHERE username = ?", (request.username,))
+    cursor.execute("SELECT id, username, password_hash, is_admin FROM users WHERE username = ?", (request.username,))
     row = cursor.fetchone()
     conn.close()
 
@@ -94,11 +96,12 @@ def login(request: LoginRequest):
     if not password_valid:
         raise HTTPException(status_code=401, detail="Kullanıcı adı veya şifre hatalı.")
 
-    token = create_token(user["username"], bool(user["is_admin"]))
+    token = create_token(user["username"], int(user["id"]), bool(user["is_admin"]))
     return {
         "token": token,
         "username": user["username"],
         "is_admin": bool(user["is_admin"]),
+        "user_id": int(user["id"]),
     }
 
 
@@ -106,7 +109,52 @@ def login(request: LoginRequest):
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row  # Sonuçları dict gibi kullanabilmek için
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+def ensure_chat_history_tables():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            username TEXT NOT NULL,
+            title TEXT NOT NULL,
+            messages_json TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("PRAGMA table_info(chat_sessions)")
+    existing_columns = {row[1] for row in cursor.fetchall()}
+    if "user_id" not in existing_columns:
+        cursor.execute("ALTER TABLE chat_sessions ADD COLUMN user_id INTEGER")
+    if "username" not in existing_columns:
+        cursor.execute("ALTER TABLE chat_sessions ADD COLUMN username TEXT")
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id_updated_at
+        ON chat_sessions(user_id, updated_at DESC)
+    """)
+    conn.commit()
+    conn.close()
+
+
+@app.on_event("startup")
+def startup_event():
+    ensure_chat_history_tables()
+
+
+def get_ports_by_country(country_name: str):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT name, country, lat, lng FROM ports WHERE country = ?", (country_name,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 
 # ---------------------------------------------------------
@@ -206,6 +254,171 @@ def list_containers_in_yard():
     return [dict(row) for row in rows]
 
 
+def resolve_chat_user(current_user: dict):
+    user_id = current_user.get("uid")
+    username = current_user.get("sub", "")
+
+    if user_id is not None:
+        try:
+            user_id = int(user_id)
+        except (TypeError, ValueError):
+            user_id = None
+
+    if user_id is None:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, username FROM users WHERE username = ?", (username,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+          user_id = int(row["id"])
+          username = row["username"]
+
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Kullanıcı doğrulanamadı.")
+
+    return {"id": user_id, "username": username}
+
+
+_CHAT_TITLE_STOPWORDS = {
+    "ve", "veya", "ile", "icin", "için", "bir", "bu", "su", "şu", "simdi", "şimdi",
+    "acaba", "lütfen", "lutfen", "mi", "mı", "mu", "mü", "de", "da", "ki", "ne",
+    "nasıl", "nasil", "kaç", "kac", "hangi", "neden", "gibi", "olan", "var", "yok",
+}
+
+
+def _chat_title_from_text(text: str) -> str:
+    if not text:
+        return ""
+
+    cleaned = text.strip()
+    if not cleaned:
+        return ""
+
+    cleaned = re.sub(r'^(merhaba|selam|iyi\s+günler|iyi\s+akşamlar|günaydın)[,!.\s-]*', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'[\n\r]+', ' ', cleaned)
+    tokens = re.findall(r'[0-9A-Za-zÇĞİÖŞÜçğıöşü]+', cleaned, flags=re.UNICODE)
+
+    meaningful = [token for token in tokens if token.lower() not in _CHAT_TITLE_STOPWORDS]
+    if not meaningful:
+        meaningful = tokens
+
+    if not meaningful:
+        return cleaned[:40].strip()
+
+    title = ' '.join(meaningful[:5]).strip()
+    return title[:40].strip()
+
+
+def _chat_session_title(messages):
+    first_user_message = next((message["content"] for message in messages if message.get("role") == "user"), "")
+    first_assistant_message = next((message["content"] for message in messages if message.get("role") == "assistant"), "")
+
+    title = _chat_title_from_text(first_user_message)
+
+    if len(title.split()) < 2:
+        assistant_title = _chat_title_from_text(first_assistant_message)
+        if assistant_title:
+            title = assistant_title
+
+    return title or "Sohbet"
+
+
+def _row_to_chat_session(row):
+    session = dict(row)
+    try:
+        session["messages"] = json.loads(session.pop("messages_json"))
+    except Exception:
+        session["messages"] = []
+        session.pop("messages_json", None)
+    return session
+
+
+def list_chat_sessions(user_id: int):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, user_id, username, title, messages_json, created_at, updated_at
+        FROM chat_sessions
+        WHERE user_id = ?
+        ORDER BY datetime(updated_at) DESC, id DESC
+        """,
+        (user_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_row_to_chat_session(row) for row in rows]
+
+
+def get_chat_session(session_id: int, user_id: int):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, user_id, username, title, messages_json, created_at, updated_at
+        FROM chat_sessions
+        WHERE id = ? AND user_id = ?
+        """,
+        (session_id, user_id),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return _row_to_chat_session(row) if row else None
+
+
+def save_chat_session(user_id: int, username: str, messages, session_id: Optional[int] = None):
+    title = _chat_session_title(messages)
+    messages_json = json.dumps(messages, ensure_ascii=False)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    if session_id is None:
+        cursor.execute(
+            """
+            INSERT INTO chat_sessions (user_id, username, title, messages_json)
+            VALUES (?, ?, ?, ?)
+            """,
+            (user_id, username, title, messages_json),
+        )
+        session_id = cursor.lastrowid
+    else:
+        cursor.execute(
+            "SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?",
+            (session_id, user_id),
+        )
+        if not cursor.fetchone():
+            conn.close()
+            raise HTTPException(status_code=404, detail="Sohbet geçmişi bulunamadı.")
+
+        cursor.execute(
+            """
+            UPDATE chat_sessions
+            SET user_id = ?, username = ?, title = ?, messages_json = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND user_id = ?
+            """,
+            (user_id, username, title, messages_json, session_id, user_id),
+        )
+
+    conn.commit()
+    conn.close()
+    return get_chat_session(session_id, user_id)
+
+
+def delete_chat_session(session_id: int, user_id: int):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM chat_sessions WHERE id = ? AND user_id = ?",
+        (session_id, user_id),
+    )
+    deleted = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted > 0
+
+
 # ---------------------------------------------------------
 # TEST ENDPOINT'LERİ (manuel test için - Postman/tarayıcı)
 # ---------------------------------------------------------
@@ -244,6 +457,14 @@ def api_get_by_date(start_date: str, end_date: str):
 @app.get("/api/containers/in-yard")
 def api_list_in_yard():
     return list_containers_in_yard()
+
+
+@app.get('/api/ports')
+def api_get_ports(country: Optional[str] = None):
+    if not country:
+        raise HTTPException(status_code=400, detail='country query parameter required')
+    ports = get_ports_by_country(country)
+    return {'count': len(ports), 'ports': ports}
 
 #----------------------------------------------------------
 #----------------------------------------------------------
@@ -478,17 +699,19 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    history: Optional[List[ChatMessage]] = []
+    history: Optional[List[ChatMessage]] = None
+    session_id: Optional[int] = None
 
 
 @app.post("/api/chat")
 def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
     # Burada current_user doğrulanmış token payload'ını içerir.
     try:
+        chat_user = resolve_chat_user(current_user)
         messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
 
         # Önceki sohbet geçmişini ekle (hafıza için)
-        for msg in request.history:
+        for msg in request.history or []:
             messages.append({"role": msg.role, "content": msg.content})
 
         # Yeni kullanıcı mesajını ekle
@@ -523,9 +746,15 @@ def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
                 model="gpt-oss-120b",
                 messages=messages,
             )
-            return {"reply": second_response.choices[0].message.content}
+            reply_text = second_response.choices[0].message.content or ""
+            assistant_messages = (request.history or []) + [ChatMessage(role="user", content=request.message), ChatMessage(role="assistant", content=reply_text)]
+            saved_session = save_chat_session(chat_user["id"], chat_user["username"], [{"role": msg.role, "content": msg.content} for msg in assistant_messages], request.session_id)
+            return {"reply": reply_text, "session": saved_session}
 
-        return {"reply": response_message.content}
+        reply_text = response_message.content or ""
+        assistant_messages = (request.history or []) + [ChatMessage(role="user", content=request.message), ChatMessage(role="assistant", content=reply_text)]
+        saved_session = save_chat_session(chat_user["id"], chat_user["username"], [{"role": msg.role, "content": msg.content} for msg in assistant_messages], request.session_id)
+        return {"reply": reply_text, "session": saved_session}
 
     except HTTPException:
         raise
@@ -535,3 +764,18 @@ def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
         if '429' in msg or 'too_many_requests' in msg or 'queue_exceeded' in msg:
             raise HTTPException(status_code=503, detail="Dış LLM servisi şu anda yoğun. Birkaç saniye sonra tekrar deneyin.")
         raise HTTPException(status_code=500, detail=f"Bir hata oluştu: {msg}")
+
+
+@app.get("/api/chat/sessions")
+def list_chat_sessions_api(current_user: dict = Depends(get_current_user)):
+    chat_user = resolve_chat_user(current_user)
+    return {"sessions": list_chat_sessions(chat_user["id"])}
+
+
+@app.delete("/api/chat/sessions/{session_id}")
+def delete_chat_session_api(session_id: int, current_user: dict = Depends(get_current_user)):
+    chat_user = resolve_chat_user(current_user)
+    deleted = delete_chat_session(session_id, chat_user["id"])
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Sohbet geçmişi bulunamadı.")
+    return {"status": "ok"}

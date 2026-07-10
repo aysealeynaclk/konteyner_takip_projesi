@@ -66,7 +66,7 @@ function handleLogout() {
       <div class="user-bar">
         <span v-if="isAuthenticated">👤 {{ currentUsername }}</span>
         <span v-else>👋 Misafir</span>
-        <button class="logout-btn" @click="handleLogout">Çıkış</button>
+        <button class="logout-btn" @click="handleLogout">{{ isGuest ? 'Giriş Yap' : 'Çıkış' }}</button>
       </div>
     </template>
   </div>

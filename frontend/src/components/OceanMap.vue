@@ -16,6 +16,84 @@ const ports = [
   { name: 'Callao', country: 'Peru', lat: -12.05, lng: -77.13 },
 ]
 
+// Normalize utility and small Turkish->English map (reused in matching)
+function normalize(str) {
+  if (!str) return ''
+  try {
+    return str.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
+  } catch (e) {
+    return str.replace(/[ÇçĞğİıÖöŞşÜü]/g, c => ({ 'Ç':'C','ç':'c','Ğ':'G','ğ':'g','İ':'I','ı':'i','Ö':'O','ö':'o','Ş':'S','ş':'s','Ü':'U','ü':'u' }[c] || c)).toLowerCase()
+  }
+}
+
+const trToEn = {
+  'türkiye': 'turkey',
+  'isveç': 'sweden',
+  'kazakistan': 'kazakhstan',
+  'arnavutluk': 'albania',
+  'kolombiya': 'colombia',
+  'portekiz': 'portugal',
+  'peru': 'peru',
+  'ingiltere': 'united kingdom',
+  'abd': 'united states',
+  'amerika': 'united states',
+  'çin': 'china',
+  'hindistan': 'india',
+}
+
+// Minimal helper to get Turkish display name for a GeoJSON feature
+let trDisplay = null
+try {
+  trDisplay = new Intl.DisplayNames(['tr'], { type: 'region' })
+} catch (e) {
+  trDisplay = null
+}
+
+function getTurkishNameForFeature(feature) {
+  if (!feature || !feature.properties) return ''
+  const p = feature.properties
+  const admin = p.ADMIN || p.NAME || p.name || ''
+  const iso2 = (
+    p['ISO3166-1-Alpha-2'] ||
+    p.ISO_A2 ||
+    p.iso_a2 ||
+    p['ISO_A2'] ||
+    ''
+  ).toString().trim()
+  if (trDisplay && iso2) {
+    try {
+      return trDisplay.of(iso2.toUpperCase())
+    } catch (e) {}
+  }
+
+  const iso3 = (
+    p['ISO3166-1-Alpha-3'] ||
+    p.ISO_A3 ||
+    p.ADM0_A3 ||
+    p.iso_a3 ||
+    p['ISO_A3'] ||
+    ''
+  ).toString().trim()
+  if (trDisplay && iso3) {
+    try {
+      return trDisplay.of(iso3.toUpperCase())
+    } catch (e) {}
+  }
+
+  // Fallback: simple replacements for the most common English names.
+  const low = (admin || '').toLowerCase()
+  if (low.includes('turkey')) return 'Türkiye'
+  if (low.includes('united states')) return 'Amerika Birleşik Devletleri'
+  if (low.includes('united kingdom') || low.includes('england')) return 'İngiltere'
+  return admin
+}
+
+// (no normalized trToEn mapping here)
+
+// (no static Corex country list here — use `ports` for presence checks)
+
+// (removed isCorexAdmin — presence is determined from `ports` array)
+
 function weatherInfo(code) {
   if (code === 0) return { icon: '☀️', label: 'Açık' }
   if ([1, 2, 3].includes(code)) return { icon: '⛅', label: 'Parçalı Bulutlu' }
@@ -32,7 +110,14 @@ const STORMY_CODES = [61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99]
 const portWeather = reactive({})
 
 // Selected country / details for right-side panel
-const selected = reactive({ visible: false, country: null, ports: [] })
+const selected = reactive({ visible: false, country: null, ports: [], weather: null })
+
+// wrapper ref to allow closing details from template
+const _closeDetailsImpl = ref(null)
+
+function closeDetails() {
+  if (_closeDetailsImpl.value) _closeDetailsImpl.value()
+}
 
 async function fetchWeather(port) {
   try {
@@ -82,18 +167,8 @@ onMounted(async () => {
 
   L.control.zoom({ position: 'bottomleft' }).addTo(map)
 
-  const tileLayer = L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}',
-    {
-      attribution: 'Tiles &copy; Esri',
-      maxZoom: 10,
-    }
-  )
-
-  tileLayer.on('load', () => console.log('OceanMap: karolar yüklendi ✅'))
-  tileLayer.on('tileerror', (e) => console.error('OceanMap: karo hatası ❌', e))
-
-  tileLayer.addTo(map)
+    // We use a plain white canvas and draw country vector fills via GeoJSON
+    // (no raster tile layer) so the background is neutral and matches design.
 
   // Konteyner boyutu geç hesaplanmış olabilir, garanti için yeniden ölç
   setTimeout(() => {
@@ -104,83 +179,170 @@ onMounted(async () => {
   let stormyCount = 0
 
   for (const port of ports) {
-    const marker = L.marker([port.lat, port.lng], { icon: createPortIcon() }).addTo(map)
+    // Do NOT add visible markers on the map per user request.
+    // Still fetch and store per-port weather for the details panel.
     const weather = await fetchWeather(port)
-
-  // store weather for later use in details panel
-  if (weather) portWeather[port.name] = weather
-
-    if (weather) {
-      const { icon, label } = weatherInfo(weather.weathercode)
-      const temp = Math.round(weather.temperature)
-
-      marker.bindTooltip(
-        `<div class="port-tooltip">
-          <strong>${port.name}</strong>, ${port.country}<br/>
-          ${icon} ${label} • ${temp}°C
-        </div>`,
-        { direction: 'top', offset: [0, -8], className: 'custom-tooltip' }
-      )
-
-      if (STORMY_CODES.includes(weather.weathercode)) {
-        stormyCount++
-      }
+    if (weather) portWeather[port.name] = weather
+    if (weather && STORMY_CODES.includes(weather.weathercode)) {
+      stormyCount++
     }
   }
-
-  // Load GeoJSON for Corex countries (approximate shapes) and add hover/click interactions
+  // Fetch world GeoJSON (public dataset) and render vector countries
   try {
-    const geoResp = await fetch('/src/data/corex_countries.geojson')
-    const geoJson = await geoResp.json()
+    const resp = await fetch('https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson')
+    const worldGeo = await resp.json()
 
-    function defaultStyle() {
-      return {
-        color: '#1f2937',
-        weight: 1,
-        fillColor: '#ffffff',
-        fillOpacity: 0,
+    // Remove very small island features (tiny polygons) so map is cleaner
+    function isLargeFeature(feature) {
+      if (!feature || !feature.geometry) return false
+      try {
+        const tmp = L.geoJSON(feature)
+        const b = tmp.getBounds()
+        const latSpan = Math.abs(b.getNorth() - b.getSouth())
+        const lngSpan = Math.abs(b.getEast() - b.getWest())
+        // keep feature if either span is larger than threshold (degrees)
+        const THRESH = 0.6
+        return latSpan > THRESH || lngSpan > THRESH
+      } catch (e) {
+        return false
       }
     }
 
-    function highlightStyle() {
+    const filteredFeatures = (worldGeo.features || []).filter(isLargeFeature)
+    const filteredGeo = { type: 'FeatureCollection', features: filteredFeatures }
+
+    // simple deterministic blue palette to give countries varying blue shades
+    const bluePalette = ['#e6f6ff', '#cff3ff', '#b3ecff', '#99e4ff', '#7edcff', '#62d3ff', '#45c9ff', '#2bbfff', '#12b5ff', '#0599db']
+
+    // (Turkish display names removed — revert to original ADMIN/NAME labels)
+
+    function hashString(s) {
+      let h = 2166136261 >>> 0
+      for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i)
+        h = Math.imul(h, 16777619) >>> 0
+      }
+      return h
+    }
+
+    function colorForFeature(feature) {
+      const key = (feature.properties.ISO_A3 || feature.properties.ADM0_A3 || feature.properties.ADMIN || feature.properties.NAME || '') + ''
+      const h = hashString(key)
+      return bluePalette[h % bluePalette.length]
+    }
+
+    function defaultStyle(feature) {
       return {
-        color: '#0ea5e9',
-        weight: 1.5,
+        color: '#374151', // dark gray border
+        weight: 0.8,
+        fillColor: colorForFeature(feature),
+        fillOpacity: 1,
+      }
+    }
+
+    function highlightStyle(feature) {
+      return {
+        color: '#0b84a5',
+        weight: 1.6,
         fillColor: '#0ea5e9',
-        fillOpacity: 0.45,
+        fillOpacity: 0.55,
       }
     }
 
-    const geoLayer = L.geoJSON(geoJson, {
+    // Track hovered and selected layers so hover highlight does not stick
+    let hoveredLayer = null
+    let selectedLayer = null
+
+    const geoLayer = L.geoJSON(filteredGeo, {
       style: defaultStyle,
       onEachFeature(feature, layer) {
+        const name = feature.properties.ADMIN || feature.properties.NAME || feature.properties.name
+
         layer.on('mouseover', () => {
-          layer.setStyle(highlightStyle())
-        })
-        layer.on('mouseout', () => {
-          // don't remove highlight if it's the selected country
-          if (!selected.country || selected.country !== feature.properties.name) {
-            layer.setStyle(defaultStyle())
+          // reset previous hovered if it's different and not the selected
+          if (hoveredLayer && hoveredLayer !== layer && hoveredLayer !== selectedLayer) {
+            hoveredLayer.setStyle(defaultStyle(hoveredLayer.feature))
+          }
+          if (layer !== selectedLayer) {
+            layer.setStyle(highlightStyle(layer.feature))
+            hoveredLayer = layer
           }
         })
-        layer.on('click', () => {
-          // when clicked, open details panel with ports in this country
-          const cname = feature.properties.name
+
+        layer.on('mouseout', () => {
+          // revert hover style unless this is the selected layer
+          if (layer !== selectedLayer) {
+            layer.setStyle(defaultStyle(layer.feature))
+            if (hoveredLayer === layer) hoveredLayer = null
+          }
+        })
+
+        layer.on('click', async () => {
+          // clear previous selected layer style
+          if (selectedLayer && selectedLayer !== layer) {
+            selectedLayer.setStyle(defaultStyle(selectedLayer.feature))
+          }
+          selectedLayer = layer
           selected.visible = true
-          selected.country = cname
-          selected.ports = ports.filter(p => p.country === cname)
-          // attach weather info to each port entry
-          selected.ports = selected.ports.map(p => ({
-            ...p,
-            weather: portWeather[p.name] || null,
-          }))
-          // ensure this feature stays highlighted
-          layer.setStyle(highlightStyle())
+          // Display country name in Turkish when available
+          selected.country = getTurkishNameForFeature(layer.feature) || name
+          // Match ports to the clicked country robustly using top-level normalize and mappings
+          const adminName = (layer.feature && (layer.feature.properties.ADMIN || layer.feature.properties.NAME || name)) || name
+          const nAdmin = normalize(adminName)
+          
+          selected.ports = ports.filter(p => {
+            const np = normalize(p.country)
+            if (np === nAdmin) return true
+            if (trToEn[np] && normalize(trToEn[np]) === nAdmin) return true
+            if (nAdmin.includes(np) || np.includes(nAdmin)) return true
+            // also allow matching via Turkish->English map
+            const mapped = trToEn[np]
+            if (mapped && normalize(mapped) === nAdmin) return true
+            return false
+          }).map(p => ({ ...p, weather: portWeather[p.name] || null }))
+
+          // Fetch current weather for country's center (no port coords available)
+          try {
+            const center = layer.getBounds().getCenter()
+            const wres = await fetch(
+              `https://api.open-meteo.com/v1/forecast?latitude=${center.lat}&longitude=${center.lng}&current_weather=true`
+            )
+            const wdata = await wres.json()
+            selected.weather = wdata.current_weather || null
+          } catch (e) {
+            selected.weather = null
+          }
+
+          // Ensure highlight stays
+          layer.setStyle(highlightStyle(layer.feature))
+
+          // Zoom to country bounds with padding
+          try {
+            const b = layer.getBounds()
+            if (b.isValid()) map.fitBounds(b.pad(0.2), { padding: [20, 20], maxZoom: 6 })
+          } catch (e) {
+            console.warn('Zoom to bounds failed', e)
+          }
         })
       }
     }).addTo(map)
+
+    // Close details helper to clear selected style
+    function closeDetails() {
+      selected.visible = false
+      selected.country = null
+      selected.ports = []
+      selected.weather = null
+      if (selectedLayer) {
+        selectedLayer.setStyle(defaultStyle(selectedLayer.feature))
+        selectedLayer = null
+      }
+    }
+
+    // expose closeDetails to template via wrapper ref
+    _closeDetailsImpl.value = closeDetails
   } catch (e) {
-    console.error('Corex countries geojson yüklenemedi:', e)
+    console.error('World GeoJSON yüklenemedi:', e)
   }
 
   if (stormyCount > 0) {
@@ -193,28 +355,24 @@ onMounted(async () => {
    <div class="map-wrapper">
     <div ref="mapContainer" class="map-container"></div>
     <div class="vignette"></div>
-    <div class="particles">
-      <span v-for="n in 25" :key="n" class="particle" :style="particleStyle(n)"></span>
-    </div>
-      <svg class="wave-layer" :style="{ '--wave-duration': waveSpeed + 's' }" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <pattern id="ripple-pattern" x="0" y="0" width="140" height="50" patternUnits="userSpaceOnUse">
-          <path d="M0,25 Q35,5 70,25 T140,25" fill="none" stroke="#bae6fd" stroke-width="1.5" opacity="0.5" />
-          <path d="M0,38 Q35,18 70,38 T140,38" fill="none" stroke="#e0f2fe" stroke-width="1" opacity="0.3" />
-        </pattern>
-      </defs>
-      <rect class="ripple-rect" x="0" y="0" width="100%" height="100%" fill="url(#ripple-pattern)" />
-    </svg>
   </div>
   
   <!-- Details panel -->
   <div v-if="selected.visible" class="details-panel">
     <div class="details-header">
       <strong>{{ selected.country }}</strong>
-      <button class="close-btn" @click="() => { selected.visible = false; selected.country = null }">✕</button>
+      <button class="close-btn" @click="closeDetails()">✕</button>
     </div>
     <div class="details-body">
-      <div v-if="selected.ports.length === 0">Bu ülkede Corex limanı bulunmuyor.</div>
+      <div v-if="selected.weather" class="country-weather compact" style="margin-bottom:8px;">
+        <strong style="display:block; margin-bottom:6px">Genel Hava:</strong>
+        <div class="weather-compact-row">
+          <span class="weather-icon-small">{{ weatherInfo(selected.weather.weathercode).icon }}</span>
+          <span class="weather-text">{{ weatherInfo(selected.weather.weathercode).label }} • {{ Math.round(selected.weather.temperature) }}°C</span>
+        </div>
+      </div>
+      <div v-if="selected.ports.length > 0" class="has-ports">Bu ülkede Corex limanı bulunmakta.</div>
+      <div v-else class="no-ports">Bu ülkede Corex limanı bulunmuyor.</div>
       <div v-for="p in selected.ports" :key="p.name" class="port-detail">
         <div class="port-title">{{ p.name }} — {{ p.country }}</div>
         <div class="port-weather" v-if="p.weather">
@@ -237,14 +395,14 @@ onMounted(async () => {
   bottom: 0;
   width: 100vw;
   height: 100vh;
-  z-index: 0;
-  background-color: #0a2e4d;
+  z-index: 0; /* restore map stacking so it's visible while UI elements stay above */
+  background-color: #ffffff; /* white canvas as requested */
 }
 
 .map-container {
   width: 100%;
   height: 100%;
-  filter: saturate(0.5) brightness(0.85);
+  background: transparent;
 }
 
 .vignette {
@@ -252,52 +410,12 @@ onMounted(async () => {
   inset: 0;
   pointer-events: none;
   z-index: 400;
-  background: radial-gradient(ellipse at center, transparent 40%, rgba(2, 10, 22, 0.6) 100%);
+  background: radial-gradient(ellipse at center, transparent 60%, rgba(2, 10, 22, 0.04) 100%);
 }
 
-.particles {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  overflow: hidden;
-  z-index: 401;
-}
 
-.particle {
-  position: absolute;
-  width: 2px;
-  height: 2px;
-  border-radius: 50%;
-  background: #7dd3fc;
-  animation-name: twinkle;
-  animation-iteration-count: infinite;
-  animation-timing-function: ease-in-out;
-}
 
-.wave-layer {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  mix-blend-mode: screen;
-  opacity: 0.18;
-  z-index: 402;
-}
-
-.ripple-rect {
-  animation: ripple-flow var(--wave-duration, 8s) linear infinite;
-}
-
-@keyframes ripple-flow {
-  from { transform: translateX(0); }
-  to   { transform: translateX(-140px); }
-}
-
-@keyframes twinkle {
-  0%, 100% { opacity: 0; transform: scale(0.5); }
-  50% { opacity: 0.8; transform: scale(1.5); }
-}
+/* removed decorative particle and wave animations for a cleaner, professional map */
 
 </style>
 
@@ -312,14 +430,10 @@ onMounted(async () => {
   height: 14px;
   border-radius: 50%;
   background: #22d3ee;
-  box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.3), 0 0 12px rgba(34, 211, 238, 0.9);
-  animation: pulse 2s infinite;
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.18);
 }
 
-@keyframes pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.25); }
-}
+/* pulse animation removed for static markers */
 
 .custom-tooltip {
   background: rgba(6, 44, 67, 0.92) !important;
@@ -327,6 +441,15 @@ onMounted(async () => {
   color: white !important;
   border-radius: 8px !important;
   padding: 4px 4px !important;
+}
+
+.country-label.leaflet-tooltip {
+  background: rgba(6,44,67,0.9);
+  color: #e6f6ff;
+  border: 1px solid rgba(14,165,233,0.16);
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.85rem;
 }
 
 .port-tooltip {
@@ -348,18 +471,45 @@ onMounted(async () => {
 
 <style scoped>
 .details-panel {
-  position: absolute;
-  right: 24px;
-  top: 80px;
-  width: 300px;
-  max-height: 60vh;
+  position: fixed;
+  left: 16px; /* pin to top-left corner */
+  top: 16px;
+  right: auto;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
   overflow: auto;
-  background: rgba(6, 44, 67, 0.9);
+  background: rgba(6, 44, 67, 0.98);
   color: white;
   border-radius: 12px;
   padding: 12px;
-  z-index: 1200;
+  z-index: 1600; /* ensure it's above all UI */
   border: 1px solid rgba(14,165,233,0.18);
+  box-shadow: 0 12px 36px rgba(2,6,23,0.35);
+}
+
+.country-weather-row { display:flex; gap:10px; align-items:center }
+.weather-icon-large { font-size:1.6rem }
+.country-weather-text { line-height:1 }
+.weather-main { font-weight:600 }
+.weather-sub { opacity:0.85; font-size:0.9rem }
+.no-ports { color: rgba(255,255,255,0.75) }
+
+.has-ports { color: #bbf7d0; font-weight:600; margin-bottom:8px }
+
+/* Compact weather */
+.weather-compact-row { display:flex; gap:8px; align-items:center }
+.weather-icon-small { font-size:1.05rem; line-height:1 }
+
+.corex-list { list-style:none; padding:6px; margin:0; max-height:150px; overflow:auto; display:flex; flex-wrap:wrap; gap:6px }
+.corex-list li { background: rgba(255,255,255,0.04); padding:6px 8px; border-radius:8px; font-size:0.86rem }
+.corex-list li.highlight { background: rgba(187,247,208,0.12); color: #bbf7d0; font-weight:700 }
+
+.weather-text { font-size:0.95rem; opacity:0.95 }
+
+/* Ensure details panel stays within viewport */
+@media (max-width: 900px) {
+  .details-panel { left: 12px; right: 12px; width: auto; top: 64px; }
 }
 .details-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px }
 .details-body { font-size:0.9rem }

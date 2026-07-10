@@ -6,8 +6,8 @@ const props = defineProps({
   token: { type: String, required: false },
 })
 
-const API_URL = 'http://127.0.0.1:8000/api/chat'
-const HISTORY_KEY = 'konteyner_takip_gecmis_sohbetler'
+const API_URL = '/api/chat'
+const HISTORY_API_URL = '/api/chat/sessions'
 
 const isOpen = ref(false)
 const showHistory = ref(false)
@@ -16,18 +16,51 @@ const userInput = ref('')
 const isLoading = ref(false)
 const messagesContainer = ref(null)
 const pastSessions = ref([])
+const activeSessionId = ref(null)
+
+function formatSessionDate(value) {
+  if (!value) return ''
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleString('tr-TR')
+}
+
+function normalizeSession(session) {
+  return {
+    id: session.id,
+    title: session.title,
+    messages: session.messages || [],
+    created_at: session.created_at,
+    updated_at: session.updated_at,
+    date: formatSessionDate(session.updated_at || session.created_at),
+  }
+}
+
+function upsertSession(session) {
+  const normalized = normalizeSession(session)
+  const index = pastSessions.value.findIndex(item => item.id === normalized.id)
+  if (index === -1) {
+    pastSessions.value.unshift(normalized)
+  } else {
+    pastSessions.value[index] = normalized
+    pastSessions.value.unshift(pastSessions.value.splice(index, 1)[0])
+  }
+}
+
+async function loadSessions() {
+  if (!props.token) return
+
+  try {
+    const headers = { Authorization: `Bearer ${props.token}` }
+    const response = await axios.get(HISTORY_API_URL, { headers })
+    pastSessions.value = (response.data.sessions || []).map(normalizeSession)
+  } catch (error) {
+    pastSessions.value = []
+  }
+}
 
 onMounted(() => {
-  // Sayfa açılınca aktif sohbet BOŞ başlar (istediğin gibi)
-  // Ama geçmiş oturumları yükleyelim, çekmecede göstermek için
-  const saved = localStorage.getItem(HISTORY_KEY)
-  if (saved) {
-    try {
-      pastSessions.value = JSON.parse(saved)
-    } catch (e) {
-      pastSessions.value = []
-    }
-  }
+  loadSessions()
 })
 
 function scrollToBottom() {
@@ -45,6 +78,7 @@ function toggleChat() {
 
 function toggleHistory() {
   showHistory.value = !showHistory.value
+  if (showHistory.value) loadSessions()
 }
 
 async function sendMessage() {
@@ -58,8 +92,21 @@ async function sendMessage() {
 
   try {
     const headers = props.token ? { Authorization: `Bearer ${props.token}` } : {}
-    const response = await axios.post(API_URL, { message: messageText }, { headers })
+    const response = await axios.post(
+      API_URL,
+      {
+        message: messageText,
+        history: messages.value.slice(0, -1),
+        session_id: activeSessionId.value,
+      },
+      { headers }
+    )
     messages.value.push({ role: 'assistant', content: response.data.reply })
+
+    if (response.data.session) {
+      activeSessionId.value = response.data.session.id
+      upsertSession(response.data.session)
+    }
   } catch (error) {
     messages.value.push({
       role: 'assistant',
@@ -78,39 +125,31 @@ function handleEnter(e) {
 
 // Mevcut sohbeti "geçmiş" olarak kaydedip yeni bir sohbete başlar
 function startNewChat() {
-  if (messages.value.length > 0) {
-    saveCurrentAsHistory()
-  }
   messages.value = []
+  activeSessionId.value = null
   showHistory.value = false
-}
-
-function saveCurrentAsHistory() {
-  const firstUserMsg = messages.value.find(m => m.role === 'user')
-  const title = firstUserMsg ? firstUserMsg.content.slice(0, 40) : 'Sohbet'
-
-  pastSessions.value.unshift({
-    id: Date.now(),
-    title,
-    messages: [...messages.value],
-    date: new Date().toLocaleString('tr-TR'),
-  })
-
-  // En fazla son 20 sohbeti sakla
-  pastSessions.value = pastSessions.value.slice(0, 20)
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(pastSessions.value))
 }
 
 function loadSession(session) {
   messages.value = [...session.messages]
+  activeSessionId.value = session.id
   showHistory.value = false
   scrollToBottom()
 }
 
-function deleteSession(id, event) {
+async function deleteSession(id, event) {
   event.stopPropagation()
-  pastSessions.value = pastSessions.value.filter(s => s.id !== id)
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(pastSessions.value))
+  try {
+    const headers = props.token ? { Authorization: `Bearer ${props.token}` } : {}
+    await axios.delete(`${HISTORY_API_URL}/${id}`, { headers })
+    pastSessions.value = pastSessions.value.filter(s => s.id !== id)
+    if (activeSessionId.value === id) {
+      activeSessionId.value = null
+      messages.value = []
+    }
+  } catch (error) {
+    // Silently ignore for now; panel will refresh next time.
+  }
 }
 
 const hasActiveChat = computed(() => messages.value.length > 0)
@@ -119,14 +158,14 @@ const hasActiveChat = computed(() => messages.value.length > 0)
 <template>
   <!-- Kapalıyken görünen amblem -->
   <button v-if="!isOpen" class="chat-bubble" @click="toggleChat">
-    <span class="bubble-icon">⚓</span>
+    <img src="/chat-logo.svg" alt="logo" class="bubble-img" />
   </button>
 
   <!-- Açık sohbet penceresi -->
   <div v-else class="chat-window">
     <header class="chat-header">
       <div class="header-left">
-        <span class="header-icon">⚓</span>
+        <img src="/chat-logo.svg" alt="logo" class="header-img" />
         <span class="header-title">Konteyner Asistanı</span>
       </div>
       <div class="header-actions">
@@ -210,8 +249,8 @@ const hasActiveChat = computed(() => messages.value.length > 0)
   position: fixed;
   bottom: 24px;
   right: 24px;
-  width: 60px;
-  height: 60px;
+  width: 72px;
+  height: 72px;
   border-radius: 50%;
   background: linear-gradient(135deg, #0c4a6e, #0891b2);
   border: none;
@@ -220,7 +259,7 @@ const hasActiveChat = computed(() => messages.value.length > 0)
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 2200;
   transition: transform 0.2s;
 }
 
@@ -230,6 +269,25 @@ const hasActiveChat = computed(() => messages.value.length > 0)
 
 .bubble-icon {
   font-size: 1.6rem;
+}
+
+.bubble-img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 50%;
+  background: transparent;
+  padding: 0;
+  box-shadow: 0 10px 30px rgba(2,6,23,0.14);
+}
+
+.header-img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: transparent;
+  padding: 2px;
 }
 
 .chat-window {
@@ -248,7 +306,7 @@ const hasActiveChat = computed(() => messages.value.length > 0)
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  z-index: 1000;
+  z-index: 2200;
   font-family: 'Segoe UI', system-ui, sans-serif;
 }
 
