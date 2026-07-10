@@ -6,11 +6,16 @@ veritabanı sorguları yapılıyor ve test endpoint'leriyle doğrulanıyor.
 LLM entegrasyonu bir sonraki adımda bu fonksiyonların üzerine eklenecek.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+import jwt
+import bcrypt
+from datetime import datetime, timedelta
+from typing import List, Optional
+from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "database" / "containers.db"
@@ -27,6 +32,74 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------
+# KİMLİK DOĞRULAMA (AUTH) AYARLARI
+# ---------------------------------------------------------
+
+SECRET_KEY = "corex-gizli-anahtar-bunu-degistir-2026"  # Üretimde .env'e taşınmalı
+ALGORITHM = "HS256"
+TOKEN_EXPIRE_HOURS = 8
+
+
+def create_token(username: str, is_admin: bool):
+    payload = {
+        "sub": username,
+        "is_admin": is_admin,
+        "exp": datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS),
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def verify_token(authorization: str = None):
+    """İstek header'ındaki token'ı doğrular. Geçersizse hata fırlatır."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
+
+    token = authorization.replace("Bearer ", "")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Oturumunuzun süresi doldu, tekrar giriş yapın.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Geçersiz oturum.")
+
+
+def get_current_user(authorization: str = Header(None)):
+    """FastAPI dependency: doğrulanmış kullanıcıyı döner, doğrulama başarısız ise 401 fırlatır."""
+    payload = verify_token(authorization)
+    return payload
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/login")
+def login(request: LoginRequest):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT username, password_hash, is_admin FROM users WHERE username = ?", (request.username,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=401, detail="Kullanıcı adı veya şifre hatalı.")
+
+    user = dict(row)
+    password_valid = bcrypt.checkpw(request.password.encode("utf-8"), user["password_hash"].encode("utf-8"))
+
+    if not password_valid:
+        raise HTTPException(status_code=401, detail="Kullanıcı adı veya şifre hatalı.")
+
+    token = create_token(user["username"], bool(user["is_admin"]))
+    return {
+        "token": token,
+        "username": user["username"],
+        "is_admin": bool(user["is_admin"]),
+    }
 
 
 
@@ -218,6 +291,15 @@ doğal, akıcı ve insana hitap eden bir Türkçe cümleyle açıkla.
     - "Şu anda limanda 5 konteyner var: ..."
 - Konteyner bulunamazsa ("NOT_FOUND") nazikçe belirt, hata gibi gösterme.
 - Kısa ve net cevap ver, gereksiz teknik detay verme, resmi ama samimi bir dil kullan.
+
+Genel sohbet kuralları:
+- Kullanıcı "merhaba", "nasılsın", "teşekkürler", "iyi günler" gibi normal bir
+  sohbet cümlesi kurarsa, ASLA fonksiyon çağırma — doğal, samimi bir Türkçe
+  cevap ver (örn. "Rica ederim, başka bir konuda yardımcı olabilirim." gibi).
+- Sadece konteyner/liman ile ilgili somut bir soru olduğunda fonksiyon çağır.
+- Önceki mesajlarda geçen konteyner numarasını hatırla — kullanıcı aynı
+  sohbette "peki ne zaman çıktı?" gibi takip sorusu sorarsa, hangi konteynerden
+  bahsettiğini önceki mesajlardan çıkar, tekrar sormasını isteme.
 """
 
 # Cerebras/OpenAI formatı, fonksiyon şemalarını JSON olarak elle tanımlıyoruz
@@ -389,19 +471,29 @@ AVAILABLE_FUNCTIONS = {
 }
 
 
+class ChatMessage(BaseModel):
+    role: str  # 'user' veya 'assistant'
+    content: str
+
+
 class ChatRequest(BaseModel):
     message: str
+    history: Optional[List[ChatMessage]] = []
 
 
 @app.post("/api/chat")
-def chat(request: ChatRequest):
+def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
+    # Burada current_user doğrulanmış token payload'ını içerir.
     try:
-        messages = [
-            {"role": "system", "content": SYSTEM_INSTRUCTION},
-            {"role": "user", "content": request.message},
-        ]
+        messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
 
-        # 1. adım: Model hangi fonksiyonu çağıracağına karar veriyor
+        # Önceki sohbet geçmişini ekle (hafıza için)
+        for msg in request.history:
+            messages.append({"role": msg.role, "content": msg.content})
+
+        # Yeni kullanıcı mesajını ekle
+        messages.append({"role": "user", "content": request.message})
+
         response = client.chat.completions.create(
             model="gpt-oss-120b",
             messages=messages,
@@ -414,7 +506,6 @@ def chat(request: ChatRequest):
         if tool_calls:
             messages.append(response_message)
 
-            # 2. adım: Her bir fonksiyon çağrısını gerçekten çalıştır
             for tool_call in tool_calls:
                 function_name = tool_call.function.name
                 function_args = json.loads(tool_call.function.arguments)
@@ -426,8 +517,8 @@ def chat(request: ChatRequest):
                     "tool_call_id": tool_call.id,
                     "content": json.dumps(function_result, ensure_ascii=False, default=str),
                 })
+                
 
-            # 3. adım: Sonucu modele geri ver, doğal dil cevabı üretsin
             second_response = client.chat.completions.create(
                 model="gpt-oss-120b",
                 messages=messages,
@@ -436,7 +527,11 @@ def chat(request: ChatRequest):
 
         return {"reply": response_message.content}
 
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Bir hata oluştu: {str(e)}")
-
-
+        msg = str(e)
+        # Dış servis yoğunluğu / rate-limit durumlarını daha kullanıcı-dostu ilet
+        if '429' in msg or 'too_many_requests' in msg or 'queue_exceeded' in msg:
+            raise HTTPException(status_code=503, detail="Dış LLM servisi şu anda yoğun. Birkaç saniye sonra tekrar deneyin.")
+        raise HTTPException(status_code=500, detail=f"Bir hata oluştu: {msg}")

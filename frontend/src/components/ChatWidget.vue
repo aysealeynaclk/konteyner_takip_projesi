@@ -2,6 +2,10 @@
 import { ref, nextTick, onMounted, computed } from 'vue'
 import axios from 'axios'
 
+const props = defineProps({
+  token: { type: String, required: false },
+})
+
 const API_URL = 'http://127.0.0.1:8000/api/chat'
 const HISTORY_KEY = 'konteyner_takip_gecmis_sohbetler'
 
@@ -53,7 +57,8 @@ async function sendMessage() {
   scrollToBottom()
 
   try {
-    const response = await axios.post(API_URL, { message: messageText })
+    const headers = props.token ? { Authorization: `Bearer ${props.token}` } : {}
+    const response = await axios.post(API_URL, { message: messageText }, { headers })
     messages.value.push({ role: 'assistant', content: response.data.reply })
   } catch (error) {
     messages.value.push({
