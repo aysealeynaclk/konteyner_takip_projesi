@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, reactive } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
@@ -27,6 +27,12 @@ function weatherInfo(code) {
 }
 
 const STORMY_CODES = [61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99]
+
+// Map of portName -> latest weather
+const portWeather = reactive({})
+
+// Selected country / details for right-side panel
+const selected = reactive({ visible: false, country: null, ports: [] })
 
 async function fetchWeather(port) {
   try {
@@ -101,6 +107,9 @@ onMounted(async () => {
     const marker = L.marker([port.lat, port.lng], { icon: createPortIcon() }).addTo(map)
     const weather = await fetchWeather(port)
 
+  // store weather for later use in details panel
+  if (weather) portWeather[port.name] = weather
+
     if (weather) {
       const { icon, label } = weatherInfo(weather.weathercode)
       const temp = Math.round(weather.temperature)
@@ -119,6 +128,61 @@ onMounted(async () => {
     }
   }
 
+  // Load GeoJSON for Corex countries (approximate shapes) and add hover/click interactions
+  try {
+    const geoResp = await fetch('/src/data/corex_countries.geojson')
+    const geoJson = await geoResp.json()
+
+    function defaultStyle() {
+      return {
+        color: '#1f2937',
+        weight: 1,
+        fillColor: '#ffffff',
+        fillOpacity: 0,
+      }
+    }
+
+    function highlightStyle() {
+      return {
+        color: '#0ea5e9',
+        weight: 1.5,
+        fillColor: '#0ea5e9',
+        fillOpacity: 0.45,
+      }
+    }
+
+    const geoLayer = L.geoJSON(geoJson, {
+      style: defaultStyle,
+      onEachFeature(feature, layer) {
+        layer.on('mouseover', () => {
+          layer.setStyle(highlightStyle())
+        })
+        layer.on('mouseout', () => {
+          // don't remove highlight if it's the selected country
+          if (!selected.country || selected.country !== feature.properties.name) {
+            layer.setStyle(defaultStyle())
+          }
+        })
+        layer.on('click', () => {
+          // when clicked, open details panel with ports in this country
+          const cname = feature.properties.name
+          selected.visible = true
+          selected.country = cname
+          selected.ports = ports.filter(p => p.country === cname)
+          // attach weather info to each port entry
+          selected.ports = selected.ports.map(p => ({
+            ...p,
+            weather: portWeather[p.name] || null,
+          }))
+          // ensure this feature stays highlighted
+          layer.setStyle(highlightStyle())
+        })
+      }
+    }).addTo(map)
+  } catch (e) {
+    console.error('Corex countries geojson yüklenemedi:', e)
+  }
+
   if (stormyCount > 0) {
     waveSpeed.value = Math.max(3, 8 - stormyCount * 1.5)
   }
@@ -132,7 +196,7 @@ onMounted(async () => {
     <div class="particles">
       <span v-for="n in 25" :key="n" class="particle" :style="particleStyle(n)"></span>
     </div>
-    <svg class="wave-layer" :style="{ '--wave-duration': waveSpeed + 's' }" xmlns="http://www.w3.org/2000/svg">
+      <svg class="wave-layer" :style="{ '--wave-duration': waveSpeed + 's' }" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <pattern id="ripple-pattern" x="0" y="0" width="140" height="50" patternUnits="userSpaceOnUse">
           <path d="M0,25 Q35,5 70,25 T140,25" fill="none" stroke="#bae6fd" stroke-width="1.5" opacity="0.5" />
@@ -141,6 +205,26 @@ onMounted(async () => {
       </defs>
       <rect class="ripple-rect" x="0" y="0" width="100%" height="100%" fill="url(#ripple-pattern)" />
     </svg>
+  </div>
+  
+  <!-- Details panel -->
+  <div v-if="selected.visible" class="details-panel">
+    <div class="details-header">
+      <strong>{{ selected.country }}</strong>
+      <button class="close-btn" @click="() => { selected.visible = false; selected.country = null }">✕</button>
+    </div>
+    <div class="details-body">
+      <div v-if="selected.ports.length === 0">Bu ülkede Corex limanı bulunmuyor.</div>
+      <div v-for="p in selected.ports" :key="p.name" class="port-detail">
+        <div class="port-title">{{ p.name }} — {{ p.country }}</div>
+        <div class="port-weather" v-if="p.weather">
+          <span class="weather-icon">{{ weatherInfo(p.weather.weathercode).icon }}</span>
+          <span>{{ weatherInfo(p.weather.weathercode).label }}</span>
+          <span class="temp">{{ Math.round(p.weather.temperature) }}°C</span>
+        </div>
+        <div v-else class="port-weather">Hava durumu alınamadı.</div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -260,4 +344,29 @@ onMounted(async () => {
 .leaflet-control-attribution a {
   color: #7dd3fc !important;
 }
+</style>
+
+<style scoped>
+.details-panel {
+  position: absolute;
+  right: 24px;
+  top: 80px;
+  width: 300px;
+  max-height: 60vh;
+  overflow: auto;
+  background: rgba(6, 44, 67, 0.9);
+  color: white;
+  border-radius: 12px;
+  padding: 12px;
+  z-index: 1200;
+  border: 1px solid rgba(14,165,233,0.18);
+}
+.details-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px }
+.details-body { font-size:0.9rem }
+.port-detail { padding:8px 0; border-top:1px dashed rgba(255,255,255,0.04) }
+.port-title { font-weight:600 }
+.port-weather { margin-top:6px; display:flex; gap:8px; align-items:center }
+.weather-icon { font-size:1.1rem }
+.temp { opacity:0.85 }
+.close-btn { background:none; border:none; color:white; cursor:pointer }
 </style>

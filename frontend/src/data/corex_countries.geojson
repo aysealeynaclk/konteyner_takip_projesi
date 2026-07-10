@@ -1,0 +1,61 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "Kazakistan" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[45, 40], [55, 40], [55, 50], [45, 50], [45, 40]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Arnavutluk" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[18, 39], [21, 39], [21, 42], [18, 42], [18, 39]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Kolombiya" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-80, -5], [-70, -5], [-70, 15], [-80, 15], [-80, -5]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "İsveç" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[11, 54], [25, 54], [25, 69], [11, 69], [11, 54]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Portekiz" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-10, 36], [0, 36], [0, 43], [-10, 43], [-10, 36]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Türkiye" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[26, 36], [45, 36], [45, 42], [26, 42], [26, 36]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Peru" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-81, -18], [-68, -18], [-68, 1], [-81, 1], [-81, -18]]]
+      }
+    }
+  ]
+}
