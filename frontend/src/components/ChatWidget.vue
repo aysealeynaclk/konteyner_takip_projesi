@@ -1,6 +1,7 @@
 <script setup>
 import { ref, nextTick, onMounted, computed } from 'vue'
 import axios from 'axios'
+import { language, t } from '../i18n'
 
 const props = defineProps({
   token: { type: String, required: false },
@@ -17,12 +18,15 @@ const isLoading = ref(false)
 const messagesContainer = ref(null)
 const pastSessions = ref([])
 const activeSessionId = ref(null)
+const editingSessionId = ref(null)
+const editingTitle = ref('')
+let editingInputEl = null
 
 function formatSessionDate(value) {
   if (!value) return ''
   const parsed = new Date(value)
   if (Number.isNaN(parsed.getTime())) return value
-  return parsed.toLocaleString('tr-TR')
+  return parsed.toLocaleString(language.value === 'en' ? 'en-US' : 'tr-TR')
 }
 
 function normalizeSession(session) {
@@ -98,6 +102,7 @@ async function sendMessage() {
         message: messageText,
         history: messages.value.slice(0, -1),
         session_id: activeSessionId.value,
+        language: language.value,
       },
       { headers }
     )
@@ -110,7 +115,7 @@ async function sendMessage() {
   } catch (error) {
     messages.value.push({
       role: 'assistant',
-      content: 'Üzgünüm, sunucuya bağlanırken bir sorun oluştu.',
+      content: t('chatConnectionError'),
       isError: true,
     })
   } finally {
@@ -135,6 +140,47 @@ function loadSession(session) {
   activeSessionId.value = session.id
   showHistory.value = false
   scrollToBottom()
+}
+
+function startEditTitle(session, event) {
+  event.stopPropagation()
+  editingSessionId.value = session.id
+  editingTitle.value = session.title
+  nextTick(() => {
+    editingInputEl?.focus()
+    editingInputEl?.select()
+  })
+}
+
+function cancelEditTitle(event) {
+  event?.stopPropagation()
+  editingSessionId.value = null
+  editingTitle.value = ''
+}
+
+async function saveEditTitle(session, event) {
+  event?.stopPropagation()
+  const newTitle = editingTitle.value.trim()
+  if (!newTitle || newTitle === session.title) {
+    cancelEditTitle()
+    return
+  }
+
+  try {
+    const headers = props.token ? { Authorization: `Bearer ${props.token}` } : {}
+    const response = await axios.patch(
+      `${HISTORY_API_URL}/${session.id}`,
+      { title: newTitle },
+      { headers }
+    )
+    if (response.data.session) {
+      upsertSession(response.data.session)
+    }
+  } catch (error) {
+    // Sessizce yok say; panel bir sonraki açılışta güncel hâlini gösterir.
+  } finally {
+    cancelEditTitle()
+  }
 }
 
 async function deleteSession(id, event) {
@@ -166,16 +212,16 @@ const hasActiveChat = computed(() => messages.value.length > 0)
     <header class="chat-header">
       <div class="header-left">
         <img src="/chat-logo.svg" alt="logo" class="header-img" />
-        <span class="header-title">Konteyner Asistanı</span>
+        <span class="header-title">{{ t('chatTitle') }}</span>
       </div>
       <div class="header-actions">
-        <button class="icon-btn" title="Geçmiş sohbetler" @click="toggleHistory">
+        <button class="icon-btn" :title="t('chatHistoryTitle')" @click="toggleHistory">
           🕑
         </button>
-        <button class="icon-btn" title="Yeni sohbet" @click="startNewChat">
+        <button class="icon-btn" :title="t('chatNewChat')" @click="startNewChat">
           ✚
         </button>
-        <button class="icon-btn" title="Kapat" @click="toggleChat">
+        <button class="icon-btn" :title="t('chatClose')" @click="toggleChat">
           ✕
         </button>
       </div>
@@ -184,7 +230,7 @@ const hasActiveChat = computed(() => messages.value.length > 0)
     <!-- Geçmiş sohbetler paneli -->
     <div v-if="showHistory" class="history-panel">
       <div v-if="pastSessions.length === 0" class="history-empty">
-        Henüz kayıtlı sohbet yok.
+        {{ t('chatEmptyHistory') }}
       </div>
       <div
         v-for="session in pastSessions"
@@ -193,17 +239,36 @@ const hasActiveChat = computed(() => messages.value.length > 0)
         @click="loadSession(session)"
       >
         <div class="history-item-text">
-          <div class="history-title">{{ session.title }}</div>
+          <input
+            v-if="editingSessionId === session.id"
+            :ref="(el) => { editingInputEl = el }"
+            v-model="editingTitle"
+            class="title-input"
+            maxlength="40"
+            @click.stop
+            @keydown.enter="saveEditTitle(session, $event)"
+            @keydown.esc="cancelEditTitle($event)"
+          />
+          <div v-else class="history-title">{{ session.title }}</div>
           <div class="history-date">{{ session.date }}</div>
         </div>
-        <button class="delete-btn" @click="deleteSession(session.id, $event)">🗑</button>
+        <div class="history-item-actions">
+          <template v-if="editingSessionId === session.id">
+            <button class="icon-action-btn" :title="t('chatSaveTitle')" @click="saveEditTitle(session, $event)">✓</button>
+            <button class="icon-action-btn" :title="t('chatCancelEdit')" @click="cancelEditTitle($event)">✕</button>
+          </template>
+          <template v-else>
+            <button class="icon-action-btn" :title="t('chatEditTitle')" @click="startEditTitle(session, $event)">✎</button>
+            <button class="icon-action-btn delete-btn" :title="t('chatDelete')" @click="deleteSession(session.id, $event)">🗑</button>
+          </template>
+        </div>
       </div>
     </div>
 
     <!-- Mesaj alanı -->
     <main v-else class="chat-area" ref="messagesContainer">
       <div v-if="messages.length === 0" class="empty-state">
-        <p>Bir konteyner numarası veya limana dair bir soru sorarak başlayabilirsin.</p>
+        <p>{{ t('chatEmptyState') }}</p>
       </div>
 
       <div
@@ -229,12 +294,12 @@ const hasActiveChat = computed(() => messages.value.length > 0)
     <footer v-if="!showHistory" class="input-area">
       <textarea
         v-model="userInput"
-        placeholder="Bir soru yaz..."
+        :placeholder="t('chatInputPlaceholder')"
         rows="1"
         @keydown.enter.prevent="handleEnter"
       ></textarea>
       <button class="send-btn" :disabled="!userInput.trim() || isLoading" @click="sendMessage()">
-        Gönder
+        {{ t('chatSend') }}
       </button>
     </footer>
   </div>
@@ -394,19 +459,37 @@ const hasActiveChat = computed(() => messages.value.length > 0)
       color: white;
 }
 
-.history-date {  
+.history-date {
     color: rgba(255, 255, 255, 0.6);
 }
 
-.delete-btn {
+.title-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 6px;
+  color: white;
+  font-size: 0.9rem;
+  padding: 0.2rem 0.4rem;
+  outline: none;
+}
+
+.history-item-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.icon-action-btn {
   background: none;
   border: none;
   cursor: pointer;
   font-size: 0.85rem;
   opacity: 0.5;
+  color: white;
 }
 
-.delete-btn:hover {
+.icon-action-btn:hover {
   opacity: 1;
 }
 

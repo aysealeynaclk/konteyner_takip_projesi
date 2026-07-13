@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import axios from 'axios'
+import { language, setLanguage, t } from '../i18n'
 
 const emit = defineEmits(['login-success', 'guest-continue'])
 
@@ -12,7 +13,7 @@ const errorMessage = ref('')
 
 async function handleLogin() {
   if (!username.value.trim() || !password.value.trim()) {
-    errorMessage.value = 'Kullanıcı adı ve şifre giriniz.'
+    errorMessage.value = t('fillCredentials')
     return
   }
 
@@ -34,9 +35,9 @@ async function handleLogin() {
     emit('login-success', { token, username: uname, isAdmin: is_admin })
   } catch (error) {
     if (error.response?.status === 401) {
-      errorMessage.value = 'Kullanıcı adı veya şifre hatalı.'
+      errorMessage.value = t('wrongCredentials')
     } else {
-      errorMessage.value = 'Sunucuya bağlanılamadı. Backend çalışıyor mu?'
+      errorMessage.value = t('serverError')
     }
   } finally {
     isLoading.value = false
@@ -55,6 +56,11 @@ function handleEnter(e) {
 
 <template>
   <div class="login-page">
+    <div class="lang-switch">
+      <button :class="{ active: language === 'tr' }" @click="setLanguage('tr')">TR</button>
+      <button :class="{ active: language === 'en' }" @click="setLanguage('en')">EN</button>
+    </div>
+
     <div class="login-card">
       <div class="brand">
         <span class="brand-icon">⚓</span>
@@ -62,25 +68,25 @@ function handleEnter(e) {
         <p class="brand-subtitle">Global Operations Platform</p>
       </div>
 
-      <h2 class="login-title">Hesabınıza giriş yapın</h2>
+      <h2 class="login-title">{{ t('loginSubtitle') }}</h2>
 
       <div class="field">
-        <label>Kullanıcı Adı</label>
+        <label>{{ t('username') }}</label>
         <input
           v-model="username"
           type="text"
-          placeholder="Kullanıcı adınızı girin"
+          :placeholder="t('usernamePlaceholder')"
           @keydown="handleEnter"
         />
       </div>
 
       <div class="field">
-        <label>Şifre</label>
+        <label>{{ t('password') }}</label>
         <div class="password-wrapper">
           <input
             v-model="password"
             :type="showPassword ? 'text' : 'password'"
-            placeholder="Şifrenizi girin"
+            :placeholder="t('passwordPlaceholder')"
             @keydown="handleEnter"
           />
           <button class="eye-btn" type="button" @click="showPassword = !showPassword">
@@ -92,13 +98,13 @@ function handleEnter(e) {
       <p v-if="errorMessage" class="error-msg">{{ errorMessage }}</p>
 
       <button class="login-btn" :disabled="isLoading" @click="handleLogin">
-        {{ isLoading ? 'Giriş yapılıyor...' : 'Giriş Yap' }}
+        {{ isLoading ? t('loginButtonLoading') : t('loginButton') }}
       </button>
 
-      <div class="divider"><span>veya</span></div>
+      <div class="divider"><span>{{ t('or') }}</span></div>
 
       <button class="guest-btn" @click="continueAsGuest">
-        Misafir olarak devam et
+        {{ t('guestButton') }}
       </button>
     </div>
   </div>
@@ -118,6 +124,34 @@ function handleEnter(e) {
   justify-content: center;
   background: radial-gradient(ellipse at top, #0c4a6e 0%, #051627 70%);
   font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+.lang-switch {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  display: flex;
+  gap: 0.4rem;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  padding: 0.25rem;
+}
+
+.lang-switch button {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.65);
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lang-switch button.active {
+  background: rgba(34, 211, 238, 0.25);
+  color: white;
 }
 
 .login-card {

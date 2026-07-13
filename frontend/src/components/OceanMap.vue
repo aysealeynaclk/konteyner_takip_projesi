@@ -1,22 +1,27 @@
 <script setup>
 import { onMounted, ref, reactive } from 'vue'
+import axios from 'axios'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import { t, countryName } from '../i18n'
 
 const mapContainer = ref(null)
-const waveSpeed = ref(8)
 
-const ports = [
-  { name: 'Aktau', country: 'Kazakistan', lat: 43.65, lng: 51.20 },
-  { name: 'Durrës', country: 'Arnavutluk', lat: 41.31, lng: 19.45 },
-  { name: 'Cartagena', country: 'Kolombiya', lat: 10.39, lng: -75.51 },
-  { name: 'Göteborg', country: 'İsveç', lat: 57.71, lng: 11.97 },
-  { name: 'Lizbon', country: 'Portekiz', lat: 38.72, lng: -9.14 },
-  { name: 'Kocaeli', country: 'Türkiye', lat: 40.85, lng: 29.88 },
-  { name: 'Callao', country: 'Peru', lat: -12.05, lng: -77.13 },
-]
+// Corex'in takip ettiği 55 ülke (7'sinde liman var), backend'deki `ports`
+// tablosundan çekilir — artık burada sabit (hardcoded) liste tutulmuyor.
+const countries = ref([])
 
-// Normalize utility and small Turkish->English map (reused in matching)
+async function loadCountries() {
+  try {
+    const res = await axios.get('/api/countries')
+    countries.value = res.data.countries || []
+  } catch (e) {
+    console.error('Ülke listesi alınamadı:', e)
+    countries.value = []
+  }
+}
+
+// Normalize utility (diacritics stripped, lowercase) reused in matching
 function normalize(str) {
   if (!str) return ''
   try {
@@ -26,19 +31,74 @@ function normalize(str) {
   }
 }
 
-const trToEn = {
-  'türkiye': 'turkey',
-  'isveç': 'sweden',
-  'kazakistan': 'kazakhstan',
-  'arnavutluk': 'albania',
-  'kolombiya': 'colombia',
-  'portekiz': 'portugal',
-  'peru': 'peru',
-  'ingiltere': 'united kingdom',
-  'abd': 'united states',
-  'amerika': 'united states',
-  'çin': 'china',
-  'hindistan': 'india',
+// GeoJSON'daki İngilizce ülke adını (ADMIN alanı) bizim 55 ülkelik Türkçe
+// listemizdeki karşılığına eşler. Intl.DisplayNames'e göre daha güvenilir
+// çünkü Kazakistan gibi ülkelerde tarayıcıya göre Türkçe/İngilizce
+// tutarsızlığı yaşanmıyor — burada tek, sabit bir doğru kaynak var.
+const enToTr = {
+  'canada': 'Kanada',
+  'united states of america': 'Amerika Birleşik Devletleri',
+  'united states': 'Amerika Birleşik Devletleri',
+  'mexico': 'Meksika',
+  'guatemala': 'Guatemala',
+  'el salvador': 'El Salvador',
+  'honduras': 'Honduras',
+  'costa rica': 'Kosta Rika',
+  'panama': 'Panama',
+  'colombia': 'Kolombiya',
+  'ecuador': 'Ekvador',
+  'peru': 'Peru',
+  'brazil': 'Brezilya',
+  'chile': 'Şili',
+  'argentina': 'Arjantin',
+  'uruguay': 'Uruguay',
+  'norway': 'Norveç',
+  'finland': 'Finlandiya',
+  'sweden': 'İsveç',
+  'lithuania': 'Litvanya',
+  'netherlands': 'Hollanda',
+  'belgium': 'Belçika',
+  'denmark': 'Danimarka',
+  'united kingdom': 'İngiltere',
+  'ireland': 'İrlanda',
+  'france': 'Fransa',
+  'switzerland': 'İsviçre',
+  'spain': 'İspanya',
+  'portugal': 'Portekiz',
+  'kosovo': 'Kosova',
+  'north macedonia': 'Kuzey Makedonya',
+  'macedonia': 'Kuzey Makedonya',
+  'serbia': 'Sırbistan',
+  'republic of serbia': 'Sırbistan',
+  'italy': 'İtalya',
+  'malta': 'Malta',
+  'greece': 'Yunanistan',
+  'albania': 'Arnavutluk',
+  'morocco': 'Fas',
+  'ghana': 'Gana',
+  'ivory coast': 'Fildişi Sahili',
+  "cote d'ivoire": 'Fildişi Sahili',
+  'zambia': 'Zambiya',
+  'angola': 'Angola',
+  'namibia': 'Namibya',
+  'mozambique': 'Mozambik',
+  'zimbabwe': 'Zimbabve',
+  'malawi': 'Malavi',
+  'tanzania': 'Tanzanya',
+  'united republic of tanzania': 'Tanzanya',
+  'kazakhstan': 'Kazakistan',
+  'uzbekistan': 'Özbekistan',
+  'turkey': 'Türkiye',
+  'türkiye': 'Türkiye',
+  'china': 'Çin',
+  "people's republic of china": 'Çin',
+  'bangladesh': 'Bangladeş',
+  'india': 'Hindistan',
+  'vietnam': 'Vietnam',
+  'viet nam': 'Vietnam',
+  'thailand': 'Tayland',
+  'singapore': 'Singapur',
+  'indonesia': 'Endonezya',
 }
 
 // Minimal helper to get Turkish display name for a GeoJSON feature
@@ -53,6 +113,11 @@ function getTurkishNameForFeature(feature) {
   if (!feature || !feature.properties) return ''
   const p = feature.properties
   const admin = p.ADMIN || p.NAME || p.name || ''
+
+  // Önce kendi 55 ülkelik listemize bak (tarayıcıdan bağımsız, tutarlı sonuç).
+  const mapped = enToTr[normalize(admin)]
+  if (mapped) return mapped
+
   const iso2 = (
     p['ISO3166-1-Alpha-2'] ||
     p.ISO_A2 ||
@@ -88,69 +153,26 @@ function getTurkishNameForFeature(feature) {
   return admin
 }
 
-// (no normalized trToEn mapping here)
-
-// (no static Corex country list here — use `ports` for presence checks)
-
-// (removed isCorexAdmin — presence is determined from `ports` array)
-
 function weatherInfo(code) {
-  if (code === 0) return { icon: '☀️', label: 'Açık' }
-  if ([1, 2, 3].includes(code)) return { icon: '⛅', label: 'Parçalı Bulutlu' }
-  if ([45, 48].includes(code)) return { icon: '🌫️', label: 'Sisli' }
-  if ([51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return { icon: '🌧️', label: 'Yağmurlu' }
-  if ([71, 73, 75, 77, 85, 86].includes(code)) return { icon: '❄️', label: 'Karlı' }
-  if ([95, 96, 99].includes(code)) return { icon: '⛈️', label: 'Fırtınalı' }
-  return { icon: '🌊', label: 'Bilinmiyor' }
+  if (code === 0) return { icon: '☀️', label: t('weatherClear') }
+  if ([1, 2, 3].includes(code)) return { icon: '⛅', label: t('weatherPartlyCloudy') }
+  if ([45, 48].includes(code)) return { icon: '🌫️', label: t('weatherFoggy') }
+  if ([51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return { icon: '🌧️', label: t('weatherRainy') }
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return { icon: '❄️', label: t('weatherSnowy') }
+  if ([95, 96, 99].includes(code)) return { icon: '⛈️', label: t('weatherStormy') }
+  return { icon: '🌊', label: t('weatherUnknown') }
 }
 
-const STORMY_CODES = [61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99]
-
-// Map of portName -> latest weather
-const portWeather = reactive({})
-
-// Selected country / details for right-side panel
-const selected = reactive({ visible: false, country: null, ports: [], weather: null })
+// Selected country / details for right-side panel.
+// `trName` her zaman Türkçe (DB eşleştirmesi için); ekranda `countryName(trName)`
+// ile o an seçili dile göre gösterilir.
+const selected = reactive({ visible: false, trName: null, ports: [], weather: null })
 
 // wrapper ref to allow closing details from template
 const _closeDetailsImpl = ref(null)
 
 function closeDetails() {
   if (_closeDetailsImpl.value) _closeDetailsImpl.value()
-}
-
-async function fetchWeather(port) {
-  try {
-    const res = await fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${port.lat}&longitude=${port.lng}&current_weather=true`
-    )
-    const data = await res.json()
-    return data.current_weather
-  } catch (e) {
-    console.error('Hava durumu alınamadı:', e)
-    return null
-  }
-}
-
-function createPortIcon() {
-  return L.divIcon({
-    className: 'port-marker',
-    html: `<div class="port-dot"></div>`,
-    iconSize: [16, 16],
-  })
-}
-
-function particleStyle(n) {
-  const left = (n * 37) % 100
-  const top = (n * 53) % 100
-  const delay = (n % 10) * 0.7
-  const duration = 4 + (n % 5)
-  return {
-    left: left + '%',
-    top: top + '%',
-    animationDelay: delay + 's',
-    animationDuration: duration + 's',
-  }
 }
 
 onMounted(async () => {
@@ -176,17 +198,8 @@ onMounted(async () => {
     console.log('OceanMap: invalidateSize çağrıldı')
   }, 200)
 
-  let stormyCount = 0
+  await loadCountries()
 
-  for (const port of ports) {
-    // Do NOT add visible markers on the map per user request.
-    // Still fetch and store per-port weather for the details panel.
-    const weather = await fetchWeather(port)
-    if (weather) portWeather[port.name] = weather
-    if (weather && STORMY_CODES.includes(weather.weathercode)) {
-      stormyCount++
-    }
-  }
   // Fetch world GeoJSON (public dataset) and render vector countries
   try {
     const resp = await fetch('https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson')
@@ -211,41 +224,21 @@ onMounted(async () => {
     const filteredFeatures = (worldGeo.features || []).filter(isLargeFeature)
     const filteredGeo = { type: 'FeatureCollection', features: filteredFeatures }
 
-    // simple deterministic blue palette to give countries varying blue shades
-    const bluePalette = ['#e6f6ff', '#cff3ff', '#b3ecff', '#99e4ff', '#7edcff', '#62d3ff', '#45c9ff', '#2bbfff', '#12b5ff', '#0599db']
-
-    // (Turkish display names removed — revert to original ADMIN/NAME labels)
-
-    function hashString(s) {
-      let h = 2166136261 >>> 0
-      for (let i = 0; i < s.length; i++) {
-        h ^= s.charCodeAt(i)
-        h = Math.imul(h, 16777619) >>> 0
-      }
-      return h
-    }
-
-    function colorForFeature(feature) {
-      const key = (feature.properties.ISO_A3 || feature.properties.ADM0_A3 || feature.properties.ADMIN || feature.properties.NAME || '') + ''
-      const h = hashString(key)
-      return bluePalette[h % bluePalette.length]
-    }
-
-    function defaultStyle(feature) {
+    function defaultStyle() {
       return {
-        color: '#374151', // dark gray border
-        weight: 0.8,
-        fillColor: colorForFeature(feature),
+        color: '#c7d6e3', // ülkeler arası ince açık gri-mavi sınır
+        weight: 0.7,
+        fillColor: '#ffffff',
         fillOpacity: 1,
       }
     }
 
-    function highlightStyle(feature) {
+    function highlightStyle() {
       return {
-        color: '#0b84a5',
-        weight: 1.6,
-        fillColor: '#0ea5e9',
-        fillOpacity: 0.55,
+        color: '#0f1f3d',
+        weight: 1.2,
+        fillColor:  '#3F43BF',  // '#263B73',//'#1e2f5c', // lacivert (hover/seçili ülke)
+        fillOpacity: 1,
       }
     }
 
@@ -284,22 +277,12 @@ onMounted(async () => {
           }
           selectedLayer = layer
           selected.visible = true
-          // Display country name in Turkish when available
-          selected.country = getTurkishNameForFeature(layer.feature) || name
-          // Match ports to the clicked country robustly using top-level normalize and mappings
-          const adminName = (layer.feature && (layer.feature.properties.ADMIN || layer.feature.properties.NAME || name)) || name
-          const nAdmin = normalize(adminName)
-          
-          selected.ports = ports.filter(p => {
-            const np = normalize(p.country)
-            if (np === nAdmin) return true
-            if (trToEn[np] && normalize(trToEn[np]) === nAdmin) return true
-            if (nAdmin.includes(np) || np.includes(nAdmin)) return true
-            // also allow matching via Turkish->English map
-            const mapped = trToEn[np]
-            if (mapped && normalize(mapped) === nAdmin) return true
-            return false
-          }).map(p => ({ ...p, weather: portWeather[p.name] || null }))
+          // Eşleştirme ve DB sorgusu her zaman Türkçe ad üzerinden yapılır;
+          // ekranda gösterilecek ad `countryName()` ile dile göre çevrilir.
+          selected.trName = getTurkishNameForFeature(layer.feature) || name
+          const nCountry = normalize(selected.trName)
+          selected.ports = countries.value
+            .filter(c => c.has_port && normalize(c.country) === nCountry)
 
           // Fetch current weather for country's center (no port coords available)
           try {
@@ -330,7 +313,7 @@ onMounted(async () => {
     // Close details helper to clear selected style
     function closeDetails() {
       selected.visible = false
-      selected.country = null
+      selected.trName = null
       selected.ports = []
       selected.weather = null
       if (selectedLayer) {
@@ -344,10 +327,6 @@ onMounted(async () => {
   } catch (e) {
     console.error('World GeoJSON yüklenemedi:', e)
   }
-
-  if (stormyCount > 0) {
-    waveSpeed.value = Math.max(3, 8 - stormyCount * 1.5)
-  }
 })
 </script>
 
@@ -360,28 +339,19 @@ onMounted(async () => {
   <!-- Details panel -->
   <div v-if="selected.visible" class="details-panel">
     <div class="details-header">
-      <strong>{{ selected.country }}</strong>
+      <strong>{{ countryName(selected.trName) }}</strong>
       <button class="close-btn" @click="closeDetails()">✕</button>
     </div>
     <div class="details-body">
       <div v-if="selected.weather" class="country-weather compact" style="margin-bottom:8px;">
-        <strong style="display:block; margin-bottom:6px">Genel Hava:</strong>
+        <strong style="display:block; margin-bottom:6px">{{ t('generalWeather') }}</strong>
         <div class="weather-compact-row">
           <span class="weather-icon-small">{{ weatherInfo(selected.weather.weathercode).icon }}</span>
           <span class="weather-text">{{ weatherInfo(selected.weather.weathercode).label }} • {{ Math.round(selected.weather.temperature) }}°C</span>
         </div>
       </div>
-      <div v-if="selected.ports.length > 0" class="has-ports">Bu ülkede Corex limanı bulunmakta.</div>
-      <div v-else class="no-ports">Bu ülkede Corex limanı bulunmuyor.</div>
-      <div v-for="p in selected.ports" :key="p.name" class="port-detail">
-        <div class="port-title">{{ p.name }} — {{ p.country }}</div>
-        <div class="port-weather" v-if="p.weather">
-          <span class="weather-icon">{{ weatherInfo(p.weather.weathercode).icon }}</span>
-          <span>{{ weatherInfo(p.weather.weathercode).label }}</span>
-          <span class="temp">{{ Math.round(p.weather.temperature) }}°C</span>
-        </div>
-        <div v-else class="port-weather">Hava durumu alınamadı.</div>
-      </div>
+      <div v-if="selected.ports.length > 0" class="has-ports">{{ t('hasPort') }}</div>
+      <div v-else class="no-ports">{{ t('noPort') }}</div>
     </div>
   </div>
 </template>
@@ -396,7 +366,7 @@ onMounted(async () => {
   width: 100vw;
   height: 100vh;
   z-index: 0; /* restore map stacking so it's visible while UI elements stay above */
-  background-color: #ffffff; /* white canvas as requested */
+  background: linear-gradient(180deg, #eaf4fc 0%, #d5ebfb 45%, #bfe0f7 100%); /* açık mavi deniz */
 }
 
 .map-container {
@@ -420,44 +390,6 @@ onMounted(async () => {
 </style>
 
 <style>
-.port-marker {
-  background: transparent;
-  border: none;
-}
-
-.port-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #22d3ee;
-  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.18);
-}
-
-/* pulse animation removed for static markers */
-
-.custom-tooltip {
-  background: rgba(6, 44, 67, 0.92) !important;
-  border: 1px solid #38bdf8 !important;
-  color: white !important;
-  border-radius: 8px !important;
-  padding: 4px 4px !important;
-}
-
-.country-label.leaflet-tooltip {
-  background: rgba(6,44,67,0.9);
-  color: #e6f6ff;
-  border: 1px solid rgba(14,165,233,0.16);
-  padding: 4px 8px;
-  border-radius: 6px;
-  font-size: 0.85rem;
-}
-
-.port-tooltip {
-  font-family: 'Segoe UI', sans-serif;
-  font-size: 0.8rem;
-  line-height: 1.4;
-}
-
 .leaflet-control-attribution {
   font-size: 9px !important;
   background: rgba(6, 44, 67, 0.7) !important;
@@ -513,10 +445,5 @@ onMounted(async () => {
 }
 .details-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px }
 .details-body { font-size:0.9rem }
-.port-detail { padding:8px 0; border-top:1px dashed rgba(255,255,255,0.04) }
-.port-title { font-weight:600 }
-.port-weather { margin-top:6px; display:flex; gap:8px; align-items:center }
-.weather-icon { font-size:1.1rem }
-.temp { opacity:0.85 }
 .close-btn { background:none; border:none; color:white; cursor:pointer }
 </style>

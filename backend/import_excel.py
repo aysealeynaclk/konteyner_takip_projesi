@@ -32,8 +32,14 @@ def main():
     # -----------------------------------------------------
     # 2. TEMİZ TABLO: sadece ihtiyacımız olan sütunlar
     # -----------------------------------------------------
-    clean_df = df[["UnitId", "TimeEnteredYard", "TimeExitedYard", "TransactionStatus"]].copy()
-    clean_df.columns = ["container_no", "time_entered_yard", "time_exited_yard", "transaction_status"]
+    clean_df = df[[
+        "UnitId", "TimeEnteredYard", "TimeExitedYard", "TransactionStatus",
+        "LocName", "TruckVisitMinutesInYard", "TransactionType", "Damage", "FreightKind",
+    ]].copy()
+    clean_df.columns = [
+        "container_no", "time_entered_yard", "time_exited_yard", "transaction_status",
+        "loc_name", "truck_visit_minutes_in_yard", "transaction_type", "damage", "freight_kind",
+    ]
     # Konteyner numarası boş olan satırları at (varsa)
     clean_df = clean_df.dropna(subset=["container_no"])
 

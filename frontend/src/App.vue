@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import OceanMap from './components/OceanMap.vue'
 import ChatWidget from './components/ChatWidget.vue'
 import LoginView from './components/LoginView.vue'
+import { language, setLanguage, t } from './i18n'
 
 // Authentication state
 const isAuthenticated = ref(false)
@@ -62,11 +63,15 @@ function handleLogout() {
       <!-- Sadece giriş yapmış kullanıcılar chatbot'u görebilir -->
       <ChatWidget v-if="isAuthenticated" :token="authToken" />
 
-      <!-- Sağ üstte kullanıcı bilgisi / çıkış butonu -->
+      <!-- Sağ üstte kullanıcı bilgisi / dil seçimi / çıkış butonu -->
       <div class="user-bar">
         <span v-if="isAuthenticated">👤 {{ currentUsername }}</span>
-        <span v-else>👋 Misafir</span>
-        <button class="logout-btn" @click="handleLogout">{{ isGuest ? 'Giriş Yap' : 'Çıkış' }}</button>
+        <span v-else>👋 {{ t('guestLabel') }}</span>
+        <div class="lang-switch">
+          <button :class="{ active: language === 'tr' }" @click="setLanguage('tr')">TR</button>
+          <button :class="{ active: language === 'en' }" @click="setLanguage('en')">EN</button>
+        </div>
+        <button class="logout-btn" @click="handleLogout">{{ isGuest ? t('loginNav') : t('logout') }}</button>
       </div>
     </template>
   </div>
@@ -110,5 +115,29 @@ function handleLogout() {
 
 .logout-btn:hover {
   background: rgba(255, 255, 255, 0.22);
+}
+
+.lang-switch {
+  display: flex;
+  gap: 0.25rem;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 0.15rem;
+}
+
+.lang-switch button {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.65);
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lang-switch button.active {
+  background: rgba(34, 211, 238, 0.3);
+  color: white;
 }
 </style>

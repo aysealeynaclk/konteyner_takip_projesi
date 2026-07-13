@@ -1,0 +1,165 @@
+import { ref, watch } from 'vue'
+
+const STORAGE_KEY = 'corex_language'
+
+export const language = ref(localStorage.getItem(STORAGE_KEY) || 'tr')
+
+watch(language, (value) => {
+  localStorage.setItem(STORAGE_KEY, value)
+})
+
+export function setLanguage(lang) {
+  language.value = lang
+}
+
+const dict = {
+  tr: {
+    loginSubtitle: 'Hesabınıza giriş yapın',
+    username: 'Kullanıcı Adı',
+    usernamePlaceholder: 'Kullanıcı adınızı girin',
+    password: 'Şifre',
+    passwordPlaceholder: 'Şifrenizi girin',
+    loginButton: 'Giriş Yap',
+    loginButtonLoading: 'Giriş yapılıyor...',
+    or: 'veya',
+    guestButton: 'Misafir olarak devam et',
+    fillCredentials: 'Kullanıcı adı ve şifre giriniz.',
+    wrongCredentials: 'Kullanıcı adı veya şifre hatalı.',
+    serverError: 'Sunucuya bağlanılamadı. Backend çalışıyor mu?',
+    guestLabel: 'Misafir',
+    logout: 'Çıkış',
+    loginNav: 'Giriş Yap',
+    generalWeather: 'Genel Hava:',
+    hasPort: 'Bu ülkede Corex limanı bulunmakta.',
+    noPort: 'Bu ülkede Corex limanı bulunmuyor.',
+    weatherClear: 'Açık',
+    weatherPartlyCloudy: 'Parçalı Bulutlu',
+    weatherFoggy: 'Sisli',
+    weatherRainy: 'Yağmurlu',
+    weatherSnowy: 'Karlı',
+    weatherStormy: 'Fırtınalı',
+    weatherUnknown: 'Bilinmiyor',
+    chatTitle: 'Konteyner Asistanı',
+    chatHistoryTitle: 'Geçmiş sohbetler',
+    chatNewChat: 'Yeni sohbet',
+    chatClose: 'Kapat',
+    chatEmptyHistory: 'Henüz kayıtlı sohbet yok.',
+    chatEmptyState: 'Bir konteyner numarası veya limana dair bir soru sorarak başlayabilirsin.',
+    chatInputPlaceholder: 'Bir soru yaz...',
+    chatSend: 'Gönder',
+    chatConnectionError: 'Üzgünüm, sunucuya bağlanırken bir sorun oluştu.',
+    chatEditTitle: 'Başlığı düzenle',
+    chatDelete: 'Sil',
+    chatSaveTitle: 'Kaydet',
+    chatCancelEdit: 'Vazgeç',
+  },
+  en: {
+    loginSubtitle: 'Sign in to your account',
+    username: 'Username',
+    usernamePlaceholder: 'Enter your username',
+    password: 'Password',
+    passwordPlaceholder: 'Enter your password',
+    loginButton: 'Login',
+    loginButtonLoading: 'Signing in...',
+    or: 'or',
+    guestButton: 'Continue as guest',
+    fillCredentials: 'Please enter a username and password.',
+    wrongCredentials: 'Incorrect username or password.',
+    serverError: 'Could not connect to the server. Is the backend running?',
+    guestLabel: 'Guest',
+    logout: 'Logout',
+    loginNav: 'Login',
+    generalWeather: 'General Weather:',
+    hasPort: 'Corex has a port in this country.',
+    noPort: 'Corex does not have a port in this country.',
+    weatherClear: 'Clear',
+    weatherPartlyCloudy: 'Partly Cloudy',
+    weatherFoggy: 'Foggy',
+    weatherRainy: 'Rainy',
+    weatherSnowy: 'Snowy',
+    weatherStormy: 'Stormy',
+    weatherUnknown: 'Unknown',
+    chatTitle: 'Container Assistant',
+    chatHistoryTitle: 'Past chats',
+    chatNewChat: 'New chat',
+    chatClose: 'Close',
+    chatEmptyHistory: 'No saved chats yet.',
+    chatEmptyState: 'You can start by asking about a container number or a port.',
+    chatInputPlaceholder: 'Type a question...',
+    chatSend: 'Send',
+    chatConnectionError: 'Sorry, something went wrong connecting to the server.',
+    chatEditTitle: 'Edit title',
+    chatDelete: 'Delete',
+    chatSaveTitle: 'Save',
+    chatCancelEdit: 'Cancel',
+  },
+}
+
+export function t(key) {
+  return dict[language.value]?.[key] ?? dict.tr[key] ?? key
+}
+
+// Haritada takip edilen 55 ülkenin İngilizce adları (Türkçe ad -> İngilizce ad)
+const countryNamesEn = {
+  'Kanada': 'Canada',
+  'Amerika Birleşik Devletleri': 'United States',
+  'Meksika': 'Mexico',
+  'Guatemala': 'Guatemala',
+  'El Salvador': 'El Salvador',
+  'Honduras': 'Honduras',
+  'Kosta Rika': 'Costa Rica',
+  'Panama': 'Panama',
+  'Kolombiya': 'Colombia',
+  'Ekvador': 'Ecuador',
+  'Peru': 'Peru',
+  'Brezilya': 'Brazil',
+  'Şili': 'Chile',
+  'Arjantin': 'Argentina',
+  'Uruguay': 'Uruguay',
+  'Norveç': 'Norway',
+  'Finlandiya': 'Finland',
+  'İsveç': 'Sweden',
+  'Litvanya': 'Lithuania',
+  'Hollanda': 'Netherlands',
+  'Belçika': 'Belgium',
+  'Danimarka': 'Denmark',
+  'İngiltere': 'United Kingdom',
+  'İrlanda': 'Ireland',
+  'Fransa': 'France',
+  'İsviçre': 'Switzerland',
+  'İspanya': 'Spain',
+  'Portekiz': 'Portugal',
+  'Kosova': 'Kosovo',
+  'Kuzey Makedonya': 'North Macedonia',
+  'Sırbistan': 'Serbia',
+  'İtalya': 'Italy',
+  'Malta': 'Malta',
+  'Yunanistan': 'Greece',
+  'Arnavutluk': 'Albania',
+  'Fas': 'Morocco',
+  'Gana': 'Ghana',
+  'Fildişi Sahili': 'Ivory Coast',
+  'Zambiya': 'Zambia',
+  'Angola': 'Angola',
+  'Namibya': 'Namibia',
+  'Mozambik': 'Mozambique',
+  'Zimbabve': 'Zimbabwe',
+  'Malavi': 'Malawi',
+  'Tanzanya': 'Tanzania',
+  'Kazakistan': 'Kazakhstan',
+  'Özbekistan': 'Uzbekistan',
+  'Türkiye': 'Turkey',
+  'Çin': 'China',
+  'Bangladeş': 'Bangladesh',
+  'Hindistan': 'India',
+  'Vietnam': 'Vietnam',
+  'Tayland': 'Thailand',
+  'Singapur': 'Singapore',
+  'Endonezya': 'Indonesia',
+}
+
+export function countryName(trName) {
+  if (!trName) return ''
+  if (language.value === 'tr') return trName
+  return countryNamesEn[trName] || trName
+}

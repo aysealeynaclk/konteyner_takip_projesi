@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from pydantic import BaseModel
 
+
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "database" / "containers.db"
 
@@ -151,104 +152,19 @@ def startup_event():
 def get_ports_by_country(country_name: str):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT name, country, lat, lng FROM ports WHERE country = ?", (country_name,))
+    cursor.execute(
+        "SELECT name, country, has_port, lat, lng FROM ports WHERE country = ?",
+        (country_name,),
+    )
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
 
 
-# ---------------------------------------------------------
-# SORGU FONKSİYONLARI (ileride LLM bunlardan birini seçecek)
-# ---------------------------------------------------------
-
-def get_container_entry(container_no: str):
-    """Bir konteynerin EN SON giriş kaydını döner."""
+def list_all_countries():
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT * FROM gate_transactions
-        WHERE container_no = ? AND transaction_type = 'IN'
-        ORDER BY gate_time DESC
-        LIMIT 1
-    """, (container_no,))
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
-
-
-def get_container_exit(container_no: str):
-    """Bir konteynerin EN SON çıkış kaydını döner."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT * FROM gate_transactions
-        WHERE container_no = ? AND transaction_type = 'OUT'
-        ORDER BY gate_time DESC
-        LIMIT 1
-    """, (container_no,))
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
-
-
-def get_container_status(container_no: str):
-    """
-
-    Belirli bir konteyner numarasının limandaki güncel durumunu (limanda mı yoksa çıkış mı yaptı) sorgular.
-    Parametre: container_no (str) - Sorgulanacak konteynerin benzersiz numarası.
-
-    Bir konteynerin şu anki durumunu belirler:
-    - Son hareketi IN ise -> hala limanda
-    - Son hareketi OUT ise -> limandan çıkmış
-    - Hiç kaydı yoksa -> bulunamadı
-    """
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT * FROM gate_transactions
-        WHERE container_no = ?
-        ORDER BY gate_time DESC
-        LIMIT 1
-    """, (container_no,))
-    row = cursor.fetchone()
-    conn.close()
-
-    if not row:
-        return {"status": "NOT_FOUND", "container_no": container_no}
-
-    last_record = dict(row)
-    status = "IN_YARD" if last_record["transaction_type"] == "IN" else "DEPARTED"
-    return {"status": status, "last_record": last_record}
-
-
-def get_containers_by_date_range(start_date: str, end_date: str):
-    """Belirli bir tarih aralığındaki tüm hareketleri döner."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT * FROM gate_transactions
-        WHERE date(gate_time) BETWEEN date(?) AND date(?)
-        ORDER BY gate_time ASC
-    """, (start_date, end_date))
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
-
-
-def list_containers_in_yard():
-    """Şu anda limanda olan (son hareketi IN olan) tüm konteynerleri listeler."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT container_no, MAX(gate_time) as last_time, transaction_type
-        FROM gate_transactions
-        GROUP BY container_no
-        HAVING transaction_type = 'IN'
-    """)
-    # Not: Bu sorgu basit bir yaklaşım - GROUP BY ile MAX(gate_time) alıp
-    # o satırın transaction_type'ının IN olup olmadığına bakıyoruz.
-    # SQLite'ta GROUP BY + MAX kombinasyonu genelde doğru satırı döner
-    # ama garanti değildir; ölçek büyürse bunu düzelteceğiz.
+    cursor.execute("SELECT country, has_port, name, lat, lng FROM ports ORDER BY country")
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -310,18 +226,69 @@ def _chat_title_from_text(text: str) -> str:
     return title[:40].strip()
 
 
+# Konteyner numarası formatını yakalayan regex (4 harf + 7 rakam, örn: CMAU6962032)
+CONTAINER_NO_PATTERN = re.compile(r'\b[A-Z]{4}\d{7}\b')
+
+
+def _generate_llm_title(first_user_message: str) -> str:
+    """LLM'e sohbeti kısa bir başlığa özetlettirir. Hata olursa None döner."""
+    try:
+        response = client.chat.completions.create(
+            model="gpt-oss-120b",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Kullanıcının mesajını en fazla 4 kelimelik, kısa ve anlamlı "
+                        "bir Türkçe başlığa dönüştür. Sadece başlığı yaz, başka hiçbir "
+                        "şey ekleme, tırnak işareti kullanma, noktalama ekleme."
+                    ),
+                },
+                {"role": "user", "content": first_user_message},
+            ],
+            max_tokens=20,
+        )
+        title = response.choices[0].message.content.strip().strip('"').strip("'")
+        return title if title else None
+    except Exception:
+        return None
+
+
+def _find_container_no_in_conversation(messages):
+    """Sohbetteki TÜM mesajları (kullanıcı ve asistan) tarayıp ilk konteyner numarasını bulur."""
+    for message in messages:
+        content = message.get("content", "")
+        match = CONTAINER_NO_PATTERN.search(content.upper())
+        if match:
+            return match.group(0)
+    return None
+
 def _chat_session_title(messages):
     first_user_message = next((message["content"] for message in messages if message.get("role") == "user"), "")
-    first_assistant_message = next((message["content"] for message in messages if message.get("role") == "assistant"), "")
 
-    title = _chat_title_from_text(first_user_message)
+    if not first_user_message and not messages:
+        return "Sohbet"
 
-    if len(title.split()) < 2:
-        assistant_title = _chat_title_from_text(first_assistant_message)
-        if assistant_title:
-            title = assistant_title
+    # 1. ÖNCE: Sohbetin TAMAMINDA konteyner numarası ara (sadece ilk mesajda değil)
+    container_no = _find_container_no_in_conversation(messages)
+    if container_no:
+        return f"{container_no} Sorgusu"
 
-    return title or "Sohbet"
+    # 2. Küçük sohbet mi? (çok kısa, selamlaşma kalıpları)
+    generic_greetings = ["merhaba", "selam", "nasılsın", "teşekkür", "sağol", "iyi günler", "günaydın"]
+    lowered = first_user_message.lower()
+    if any(greeting in lowered for greeting in generic_greetings) and len(first_user_message.split()) <= 5:
+        return "Genel Sohbet"
+
+    # 3. Yukarıdakiler işe yaramadıysa: LLM'e özetlettir
+    llm_title = _generate_llm_title(first_user_message)
+    if llm_title:
+        return llm_title
+
+    # 4. Son çare: ilk 5 kelime
+    words = first_user_message.split()
+    fallback = " ".join(words[:5])
+    return fallback if fallback else "Sohbet"
 
 
 def _row_to_chat_session(row):
@@ -419,6 +386,25 @@ def delete_chat_session(session_id: int, user_id: int):
     return deleted > 0
 
 
+def rename_chat_session(session_id: int, user_id: int, new_title: str):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE chat_sessions
+        SET title = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+        """,
+        (new_title, session_id, user_id),
+    )
+    updated = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if not updated:
+        return None
+    return get_chat_session(session_id, user_id)
+
+
 # ---------------------------------------------------------
 # TEST ENDPOINT'LERİ (manuel test için - Postman/tarayıcı)
 # ---------------------------------------------------------
@@ -466,6 +452,12 @@ def api_get_ports(country: Optional[str] = None):
     ports = get_ports_by_country(country)
     return {'count': len(ports), 'ports': ports}
 
+
+@app.get('/api/countries')
+def api_get_countries():
+    countries = list_all_countries()
+    return {'count': len(countries), 'countries': countries}
+
 #----------------------------------------------------------
 #----------------------------------------------------------
 # ---------------------------------------------------------
@@ -492,14 +484,47 @@ client = OpenAI(
 SYSTEM_INSTRUCTION = """
 Sen bir liman konteyner takip sisteminin asistanısın.
 Kullanıcılar sana konteynerlerin giriş/çıkış zamanları, durumu (limanda mı,
-çıkmış mı) veya belirli tarih aralığındaki hareketler hakkında Türkçe sorular soracak.
+çıkmış mı), belirli tarih aralığındaki hareketler, sahadaki konumu, sahada
+geçirdiği süre, hasar durumu veya yük tipi hakkında Türkçe sorular soracak.
 
 Uygun fonksiyonu çağırarak veritabanından veriyi çek, sonra kullanıcıya
 doğal, akıcı ve insana hitap eden bir Türkçe cümleyle açıkla.
 
+Fonksiyonların döndürdüğü kayıtlarda şu ham alanlar bulunur, bunları
+yorumlayıp doğal Türkçe'ye çevirerek anlat:
+- loc_name: konteynerin sahadaki (yard) konum/slot kodu (örn. "Y-YCT-C24273")
+- truck_visit_minutes_in_yard: kamyonun sahada geçirdiği süre, dakika cinsinden
+- transaction_type: işlem tipi — ReceiveExport (ihracat için limana kabul),
+  DeliverImport (ithalat teslimatı), DeliverEmpty (boş konteyner teslimatı),
+  ReceiveEmpty (boş konteyner kabulü), DrayOffExport/DrayOffImport (saha içi
+  taşıma), DeliverBreakBulk (parça yük teslimatı)
+- damage: hasar durumu — 1 ise hasarlı, 0 ise hasarsız
+- freight_kind: yük tipi — FCL (dolu konteyner), MTY (boş konteyner),
+  BBK (parça yük / break bulk)
+
 İfade kuralları:
+- EN ÖNEMLİ KURAL: SADECE kullanıcının sorduğu soruya cevap ver, başka HİÇBİR
+  alandan bahsetme. Fonksiyonlar tek çağrıda giriş zamanı, çıkış zamanı,
+  sahadaki konum (loc_name), sahada geçirilen süre (truck_visit_minutes_in_yard),
+  işlem tipi (transaction_type), hasar durumu (damage) ve yük tipi
+  (freight_kind) gibi bir sürü alanı BİRLİKTE döndürür — bu, kullanıcının
+  hepsini bilmek istediği anlamına GELMEZ. Cevabını sadece sorulan konuyla
+  sınırla, diğer alanları görmezden gel, "ayrıca şunu da belirteyim" tarzı
+  gönüllü ek bilgi verme.
+    - Soru: "CMAU6962032 girdi mi?" -> SADECE giriş yapıp yapmadığını ve
+      giriş zamanını söyle. Çıkış yapıp yapmadığını, slotunu, sahada kaldığı
+      süreyi, hasar durumunu veya yük tipini SÖYLEME — sorulmadı.
+    - Soru: "CMAU6962032 çıktı mı?" -> SADECE çıkış bilgisini söyle, girişten
+      bahsetme.
+    - Soru: "CMAU6962032 sahada nerede?" -> SADECE loc_name'e göre cevap ver.
+    - Soru: "CMAU6962032 hasarlı mı?" -> SADECE damage alanına göre cevap ver.
+  Kullanıcı "tüm bilgileri ver" / "detaylı anlat" / "durumu nedir" gibi genel
+  ve açık uçlu bir şey sorarsa, o zaman fonksiyonun döndürdüğü ilgili tüm
+  alanları anlat.
 - Tarih/saatleri okunaklı yaz (örn. "5 Temmuz 2026, saat 14:32")
-- Veritabanı sütun adlarını (örn. "time_entered_yard") ham haliyle asla gösterme
+- Veritabanı sütun adlarını (örn. "time_entered_yard", "loc_name") ham haliyle
+  asla gösterme, kodları (ReceiveExport, FCL, vb.) da olduğu gibi tekrarlama —
+  yukarıdaki açıklamalara göre doğal Türkçe'ye çevir
 - Sonuç SIFIR (boş liste, hiç kayıt yok) ise bunu robotik bir sayı olarak değil,
   doğal bir cümleyle ifade et. Örnek:
     - KÖTÜ: "Limanda 0 konteyner bulunuyor."
@@ -523,13 +548,82 @@ Genel sohbet kuralları:
   bahsettiğini önceki mesajlardan çıkar, tekrar sormasını isteme.
 """
 
+SYSTEM_INSTRUCTION_EN = """
+You are the assistant for a port container tracking system.
+Users will ask you, in English, about containers' entry/exit times, current
+status (still in the yard or already departed), movements within a date
+range, their location in the yard, damage status, or freight type.
+
+Call the appropriate function to fetch the data from the database, then
+explain it to the user in a natural, fluent, human-friendly English sentence.
+
+The records returned by the functions contain these raw fields — interpret
+them and explain in natural English:
+- loc_name: the container's location/slot code in the yard (e.g. "Y-YCT-C24273")
+- truck_visit_minutes_in_yard: minutes the truck spent in the yard
+- transaction_type: transaction type — ReceiveExport (received for export),
+  DeliverImport (import delivery), DeliverEmpty (empty container delivery),
+  ReceiveEmpty (empty container receipt), DrayOffExport/DrayOffImport
+  (in-yard drayage), DeliverBreakBulk (break-bulk delivery)
+- damage: damage status — 1 means damaged, 0 means undamaged
+- freight_kind: freight type — FCL (full container load), MTY (empty
+  container), BBK (break bulk)
+
+Wording rules:
+- MOST IMPORTANT RULE: answer ONLY the question the user asked, and mention
+  NOTHING else. A single function call returns entry time, exit time,
+  location (loc_name), time in yard (truck_visit_minutes_in_yard),
+  transaction type (transaction_type), damage (damage), and freight type
+  (freight_kind) all together — that does NOT mean the user wants to know
+  all of it. Keep your answer limited to what was asked, ignore the other
+  fields, don't volunteer extra information like "by the way, also...".
+    - Question: "Did CMAU6962032 enter?" -> ONLY say whether it entered and
+      when. Do NOT mention whether it exited, its slot, time in yard, damage,
+      or freight type — not asked.
+    - Question: "Did CMAU6962032 exit?" -> ONLY answer about the exit, don't
+      mention entry.
+    - Question: "Where is CMAU6962032 in the yard?" -> answer ONLY using
+      loc_name.
+    - Question: "Is CMAU6962032 damaged?" -> answer ONLY using the damage
+      field.
+  If the user asks something open-ended like "give me all the details" /
+  "tell me its full status", then explain all the relevant fields returned.
+- Write dates/times in a readable way (e.g. "July 5, 2026 at 2:32 PM")
+- Never show raw database column names (e.g. "time_entered_yard", "loc_name"),
+  and don't repeat raw codes (ReceiveExport, FCL, etc.) verbatim either —
+  translate them into natural English per the explanations above
+- If the result is ZERO (empty list, no records), phrase it as a natural
+  sentence, not a robotic number. Example:
+    - BAD: "There are 0 containers in the yard."
+    - GOOD: "There are no containers in the yard right now, the yard looks empty."
+- If the result is a SINGLE record, give the info directly without emphasizing
+  the count. Example:
+    - BAD: "1 container found: X"
+    - GOOD: "Yes, container X is currently in the yard."
+- If the result has MULTIPLE records, mention the count in a natural sentence
+  and list them with bullet points. Example:
+    - "There are currently 5 containers in the yard: ..."
+- If a container isn't found ("NOT_FOUND"), state it gently, not like an error.
+- Keep answers short and to the point, avoid unnecessary technical detail,
+  use a professional but friendly tone.
+
+General conversation rules:
+- If the user says something conversational like "hello", "how are you",
+  "thanks", "good morning", NEVER call a function — reply naturally and
+  warmly in English (e.g. "You're welcome, happy to help with anything else.").
+- Only call a function when there's a concrete container/port-related question.
+- Remember container numbers mentioned earlier in the conversation — if the
+  user asks a follow-up like "so when did it exit?" in the same chat, infer
+  which container they mean from earlier messages, don't ask again.
+"""
+
 # Cerebras/OpenAI formatı, fonksiyon şemalarını JSON olarak elle tanımlıyoruz
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "get_container_entry",
-            "description": "Bir konteynerin en son giriş (IN) kaydını getirir.",
+            "description": "Bir konteynerin en son giriş (IN) kaydını getirir. Sahadaki konumu (loc_name), sahada geçirdiği süreyi (truck_visit_minutes_in_yard), işlem tipini (transaction_type), hasar durumunu (damage) ve yük tipini (freight_kind) de içerir.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -543,7 +637,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_container_exit",
-            "description": "Bir konteynerin en son çıkış (OUT) kaydını getirir.",
+            "description": "Bir konteynerin en son çıkış (OUT) kaydını getirir. Sahadaki konumu (loc_name), sahada geçirdiği süreyi (truck_visit_minutes_in_yard), işlem tipini (transaction_type), hasar durumunu (damage) ve yük tipini (freight_kind) de içerir.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -557,7 +651,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_container_status",
-            "description": "Bir konteynerin şu anki durumunu (limanda mı, çıkmış mı) getirir.",
+            "description": "Bir konteynerin şu anki durumunu (limanda mı, çıkmış mı) getirir. Sahadaki konumu (loc_name), sahada geçirdiği süreyi (truck_visit_minutes_in_yard), işlem tipini (transaction_type), hasar durumunu (damage) ve yük tipini (freight_kind) de içerir.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -571,7 +665,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_containers_by_date_range",
-            "description": "Belirli bir tarih aralığındaki tüm giriş/çıkış hareketlerini getirir.",
+            "description": "Belirli bir tarih aralığındaki tüm giriş/çıkış hareketlerini getirir. Her kayıtta sahadaki konum (loc_name), sahada geçirilen süre (truck_visit_minutes_in_yard), işlem tipi (transaction_type), hasar durumu (damage) ve yük tipi (freight_kind) de bulunur.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -586,7 +680,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "list_containers_in_yard",
-            "description": "Şu anda limanda olan tüm konteynerleri listeler.",
+            "description": "Şu anda limanda olan tüm konteynerleri listeler. Her kayıtta sahadaki konum (loc_name), sahada geçirilen süre (truck_visit_minutes_in_yard), işlem tipi (transaction_type), hasar durumu (damage) ve yük tipi (freight_kind) de bulunur.",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -600,12 +694,21 @@ TOOLS = [
 #
 #--------------------------------------------------------------
 
+# Bu alanlar temiz tabloda dolu ve tüm sorgu fonksiyonlarınca döndürülüyor:
+# loc_name (sahadaki konumu), truck_visit_minutes_in_yard (sahada geçirdiği dakika),
+# transaction_type (işlem tipi), damage (hasar var mı: 0/1), freight_kind (FCL/MTY/BBK)
+_GATE_COLUMNS = """
+    container_no, time_entered_yard, time_exited_yard, transaction_status,
+    loc_name, truck_visit_minutes_in_yard, transaction_type, damage, freight_kind
+"""
+
+
 def get_container_entry(container_no: str):
-    """Bir konteynerin limana/sahaya giriş zamanını döner (iptal edilmiş kayıtlar hariç)."""
+    """Bir konteynerin limana/sahaya giriş kaydını döner (iptal edilmiş kayıtlar hariç)."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT container_no, time_entered_yard
+    cursor.execute(f"""
+        SELECT {_GATE_COLUMNS}
         FROM gate_transactions
         WHERE container_no = ? AND transaction_status != 'CANCEL'
         ORDER BY time_entered_yard DESC
@@ -617,11 +720,11 @@ def get_container_entry(container_no: str):
 
 
 def get_container_exit(container_no: str):
-    """Bir konteynerin limandan/sahadan çıkış zamanını döner (iptal edilmiş kayıtlar hariç)."""
+    """Bir konteynerin limandan/sahadan çıkış kaydını döner (iptal edilmiş kayıtlar hariç)."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT container_no, time_exited_yard
+    cursor.execute(f"""
+        SELECT {_GATE_COLUMNS}
         FROM gate_transactions
         WHERE container_no = ? AND time_exited_yard IS NOT NULL AND transaction_status != 'CANCEL'
         ORDER BY time_exited_yard DESC
@@ -635,8 +738,8 @@ def get_container_status(container_no: str):
     """Bir konteynerin şu anki durumunu belirler (iptal edilmiş kayıtlar hariç)."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT container_no, time_entered_yard, time_exited_yard
+    cursor.execute(f"""
+        SELECT {_GATE_COLUMNS}
         FROM gate_transactions
         WHERE container_no = ? AND transaction_status != 'CANCEL'
         ORDER BY time_entered_yard DESC
@@ -657,8 +760,8 @@ def get_containers_by_date_range(start_date: str, end_date: str):
     """Belirli bir tarih aralığında giriş yapan konteynerleri döner (iptal edilmiş kayıtlar hariç)."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT container_no, time_entered_yard, time_exited_yard
+    cursor.execute(f"""
+        SELECT {_GATE_COLUMNS}
         FROM gate_transactions
         WHERE date(time_entered_yard) BETWEEN date(?) AND date(?)
           AND transaction_status != 'CANCEL'
@@ -672,8 +775,8 @@ def list_containers_in_yard():
     """Şu anda limanda/sahada olan konteynerleri listeler (iptal edilmiş kayıtlar hariç)."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT container_no, time_entered_yard
+    cursor.execute(f"""
+        SELECT {_GATE_COLUMNS}
         FROM gate_transactions
         WHERE time_exited_yard IS NULL AND transaction_status != 'CANCEL'
         ORDER BY time_entered_yard DESC
@@ -701,6 +804,7 @@ class ChatRequest(BaseModel):
     message: str
     history: Optional[List[ChatMessage]] = None
     session_id: Optional[int] = None
+    language: Optional[str] = "tr"
 
 
 @app.post("/api/chat")
@@ -708,7 +812,8 @@ def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
     # Burada current_user doğrulanmış token payload'ını içerir.
     try:
         chat_user = resolve_chat_user(current_user)
-        messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
+        system_instruction = SYSTEM_INSTRUCTION_EN if request.language == "en" else SYSTEM_INSTRUCTION
+        messages = [{"role": "system", "content": system_instruction}]
 
         # Önceki sohbet geçmişini ekle (hafıza için)
         for msg in request.history or []:
@@ -779,3 +884,24 @@ def delete_chat_session_api(session_id: int, current_user: dict = Depends(get_cu
     if not deleted:
         raise HTTPException(status_code=404, detail="Sohbet geçmişi bulunamadı.")
     return {"status": "ok"}
+
+
+class RenameChatSessionRequest(BaseModel):
+    title: str
+
+
+@app.patch("/api/chat/sessions/{session_id}")
+def rename_chat_session_api(
+    session_id: int,
+    payload: RenameChatSessionRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    chat_user = resolve_chat_user(current_user)
+    new_title = payload.title.strip()[:40]
+    if not new_title:
+        raise HTTPException(status_code=400, detail="Başlık boş olamaz.")
+
+    session = rename_chat_session(session_id, chat_user["id"], new_title)
+    if not session:
+        raise HTTPException(status_code=404, detail="Sohbet geçmişi bulunamadı.")
+    return {"session": session}
