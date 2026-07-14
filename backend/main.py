@@ -75,6 +75,13 @@ def get_current_user(authorization: str = Header(None)):
     return payload
 
 
+def get_current_admin(current_user: dict = Depends(get_current_user)):
+    """FastAPI dependency: sadece is_admin=True olan kullanıcılara izin verir."""
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Bu işlem için admin yetkisi gerekiyor.")
+    return current_user
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -458,6 +465,76 @@ def api_get_countries():
     countries = list_all_countries()
     return {'count': len(countries), 'countries': countries}
 
+
+# ---------------------------------------------------------
+# ADMIN ENDPOINT'LERİ (sadece is_admin=True kullanıcılar)
+# ---------------------------------------------------------
+
+class NewContainerEntryRequest(BaseModel):
+    container_no: str
+    time_entered_yard: str
+    transaction_type: str
+    freight_kind: str
+    loc_name: Optional[str] = None
+    damage: bool = False
+
+
+class CloseExitRequest(BaseModel):
+    time_exited_yard: str
+
+
+class UpdateContainerDetailsRequest(BaseModel):
+    loc_name: Optional[str] = None
+    damage: Optional[bool] = None
+    freight_kind: Optional[str] = None
+
+
+@app.get("/api/admin/meta")
+def api_admin_meta(current_admin: dict = Depends(get_current_admin)):
+    return {"transaction_types": TRANSACTION_TYPES, "freight_kinds": FREIGHT_KINDS}
+
+
+@app.post("/api/admin/containers")
+def api_create_container_entry(request: NewContainerEntryRequest, current_admin: dict = Depends(get_current_admin)):
+    record = create_container_entry(
+        container_no=request.container_no,
+        time_entered_yard=request.time_entered_yard,
+        transaction_type=request.transaction_type,
+        freight_kind=request.freight_kind,
+        loc_name=request.loc_name,
+        damage=request.damage,
+    )
+    return {"record": record}
+
+
+@app.get("/api/admin/containers/search")
+def api_search_containers(container_no: str, current_admin: dict = Depends(get_current_admin)):
+    records = search_container_records(container_no)
+    return {"count": len(records), "records": records}
+
+
+@app.post("/api/admin/containers/{record_id}/exit")
+def api_close_container_exit(record_id: int, request: CloseExitRequest, current_admin: dict = Depends(get_current_admin)):
+    record = close_container_exit(record_id, request.time_exited_yard)
+    return {"record": record}
+
+
+@app.post("/api/admin/containers/{record_id}/cancel")
+def api_cancel_container_record(record_id: int, current_admin: dict = Depends(get_current_admin)):
+    record = cancel_container_record(record_id)
+    return {"record": record}
+
+
+@app.patch("/api/admin/containers/{record_id}")
+def api_update_container_details(record_id: int, request: UpdateContainerDetailsRequest, current_admin: dict = Depends(get_current_admin)):
+    record = update_container_details(
+        record_id,
+        loc_name=request.loc_name,
+        damage=request.damage,
+        freight_kind=request.freight_kind,
+    )
+    return {"record": record}
+
 #----------------------------------------------------------
 #----------------------------------------------------------
 # ---------------------------------------------------------
@@ -784,6 +861,191 @@ def list_containers_in_yard():
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
+# ---------------------------------------------------------
+# ADMIN: yeni konteyner kaydı ekleme / kayıt arama / kapatma / iptal etme
+# Admin veri SİLEMEZ, sadece yeni kayıt ekleyebilir, açık bir kaydın çıkışını
+# girebilir veya bir kaydı iptal (CANCEL) edebilir. Bu üç işlem dışında
+# gate_transactions tablosuna dokunan başka bir yol yok.
+# ---------------------------------------------------------
+
+CONTAINER_NO_FULL_PATTERN = re.compile(r'^[A-Z]{4}\d{7}$')
+
+TRANSACTION_TYPES = [
+    "ReceiveExport", "DeliverImport", "DeliverEmpty",
+    "ReceiveEmpty", "DrayOffExport", "DrayOffImport", "DeliverBreakBulk",
+]
+FREIGHT_KINDS = ["FCL", "MTY", "BBK"]
+
+_ADMIN_COLUMNS = """
+    id, container_no, time_entered_yard, time_exited_yard, transaction_status,
+    loc_name, truck_visit_minutes_in_yard, transaction_type, damage, freight_kind
+"""
+
+
+def create_container_entry(
+    container_no: str,
+    time_entered_yard: str,
+    transaction_type: str,
+    freight_kind: str,
+    loc_name: Optional[str] = None,
+    damage: bool = False,
+):
+    container_no = container_no.strip().upper()
+    if not CONTAINER_NO_FULL_PATTERN.match(container_no):
+        raise HTTPException(status_code=400, detail="Konteyner no formatı geçersiz. Beklenen format: 4 harf + 7 rakam (örn. ABCD1234567).")
+    if transaction_type not in TRANSACTION_TYPES:
+        raise HTTPException(status_code=400, detail=f"Geçersiz işlem tipi. Geçerli değerler: {', '.join(TRANSACTION_TYPES)}")
+    if freight_kind not in FREIGHT_KINDS:
+        raise HTTPException(status_code=400, detail=f"Geçersiz yük tipi. Geçerli değerler: {', '.join(FREIGHT_KINDS)}")
+    try:
+        entered_dt = datetime.fromisoformat(time_entered_yard)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Giriş zamanı formatı geçersiz.")
+    if entered_dt > datetime.now():
+        raise HTTPException(status_code=400, detail="Giriş zamanı gelecekte bir zaman olamaz.")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Bu konteynerin COMPLETE durumundaki tüm geçmiş kayıtlarına bak: herhangi
+    # birinde çıkış (time_exited_yard) girilmemişse, konteyner hâlâ sahada
+    # demektir — yeni bir giriş kaydı oluşturulmasına izin verilmez.
+    cursor.execute(
+        "SELECT COUNT(*) as cnt FROM gate_transactions WHERE container_no = ? AND transaction_status = 'COMPLETE' AND time_exited_yard IS NULL",
+        (container_no,),
+    )
+    open_count = cursor.fetchone()["cnt"]
+    if open_count > 0:
+        conn.close()
+        raise HTTPException(
+            status_code=400,
+            detail=f"{container_no} için sahada hâlâ açık (çıkışı yapılmamış) bir kaydı var. Yeni giriş oluşturulamaz, önce mevcut kaydın çıkışı girilmeli.",
+        )
+
+    cursor.execute(
+        """
+        INSERT INTO gate_transactions
+            (container_no, time_entered_yard, time_exited_yard, transaction_status,
+             loc_name, truck_visit_minutes_in_yard, transaction_type, damage, freight_kind)
+        VALUES (?, ?, NULL, 'COMPLETE', ?, NULL, ?, ?, ?)
+        """,
+        (container_no, time_entered_yard, loc_name, transaction_type, int(bool(damage)), freight_kind),
+    )
+    new_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return get_gate_record_by_id(new_id)
+
+
+def get_gate_record_by_id(record_id: int):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"SELECT {_ADMIN_COLUMNS} FROM gate_transactions WHERE id = ?", (record_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def search_container_records(container_no: str):
+    container_no = container_no.strip().upper()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        f"""
+        SELECT {_ADMIN_COLUMNS}
+        FROM gate_transactions
+        WHERE container_no = ?
+        ORDER BY time_entered_yard DESC
+        """,
+        (container_no,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def close_container_exit(record_id: int, time_exited_yard: str):
+    record = get_gate_record_by_id(record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Kayıt bulunamadı.")
+    if record["transaction_status"] != "COMPLETE" or record["time_exited_yard"] is not None:
+        raise HTTPException(status_code=400, detail="Bu kayıt zaten kapalı ya da iptal edilmiş, çıkış eklenemez.")
+
+    entered = datetime.fromisoformat(record["time_entered_yard"])
+    exited = datetime.fromisoformat(time_exited_yard)
+    if exited <= entered:
+        raise HTTPException(status_code=400, detail="Çıkış zamanı, giriş zamanından sonra olmalı.")
+
+    minutes = round((exited - entered).total_seconds() / 60, 1)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE gate_transactions SET time_exited_yard = ?, truck_visit_minutes_in_yard = ? WHERE id = ?",
+        (time_exited_yard, minutes, record_id),
+    )
+    conn.commit()
+    conn.close()
+    return get_gate_record_by_id(record_id)
+
+
+def cancel_container_record(record_id: int):
+    record = get_gate_record_by_id(record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Kayıt bulunamadı.")
+    if record["transaction_status"] == "CANCEL":
+        raise HTTPException(status_code=400, detail="Bu kayıt zaten iptal edilmiş.")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE gate_transactions SET transaction_status = 'CANCEL' WHERE id = ?",
+        (record_id,),
+    )
+    conn.commit()
+    conn.close()
+    return get_gate_record_by_id(record_id)
+
+
+def update_container_details(
+    record_id: int,
+    loc_name: Optional[str] = None,
+    damage: Optional[bool] = None,
+    freight_kind: Optional[str] = None,
+):
+    """Mevcut bir kaydın SADECE konum, hasar ve yük tipi bilgisini günceller.
+    container_no, giriş/çıkış zamanları, işlem tipi ve durum burada asla
+    değiştirilmez — bu alanlar zaman çizelgesi bütünlüğünü korur."""
+    record = get_gate_record_by_id(record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Kayıt bulunamadı.")
+    if freight_kind is not None and freight_kind not in FREIGHT_KINDS:
+        raise HTTPException(status_code=400, detail=f"Geçersiz yük tipi. Geçerli değerler: {', '.join(FREIGHT_KINDS)}")
+
+    updates = []
+    params = []
+    if loc_name is not None:
+        updates.append("loc_name = ?")
+        params.append(loc_name)
+    if damage is not None:
+        updates.append("damage = ?")
+        params.append(int(bool(damage)))
+    if freight_kind is not None:
+        updates.append("freight_kind = ?")
+        params.append(freight_kind)
+
+    if not updates:
+        return record
+
+    params.append(record_id)
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"UPDATE gate_transactions SET {', '.join(updates)} WHERE id = ?", params)
+    conn.commit()
+    conn.close()
+    return get_gate_record_by_id(record_id)
 
 
 AVAILABLE_FUNCTIONS = {

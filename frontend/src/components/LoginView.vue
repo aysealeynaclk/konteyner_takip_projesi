@@ -63,7 +63,7 @@ function handleEnter(e) {
 
     <div class="login-card">
       <div class="brand">
-        <span class="brand-icon">⚓</span>
+        <img src="/logo-icon.png" alt="Corex logo" class="brand-logo" />
         <h1>COREX</h1>
         <p class="brand-subtitle">Global Operations Platform</p>
       </div>
@@ -171,8 +171,10 @@ function handleEnter(e) {
   margin-bottom: 1.75rem;
 }
 
-.brand-icon {
-  font-size: 2.25rem;
+.brand-logo {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
 }
 
 .brand h1 {

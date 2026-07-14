@@ -10,17 +10,20 @@ const isAuthenticated = ref(false)
 const isGuest = ref(false)
 const authToken = ref(null)
 const currentUsername = ref('')
+const isAdmin = ref(false)
 
 onMounted(() => {
   // LocalStorage'dan önceki oturumu yükle (varsa)
   const token = localStorage.getItem('corex_token')
   const guest = localStorage.getItem('corex_guest')
   const uname = localStorage.getItem('corex_username')
+  const admin = localStorage.getItem('corex_is_admin')
 
   if (token) {
     authToken.value = token
     isAuthenticated.value = true
     currentUsername.value = uname || ''
+    isAdmin.value = admin === 'true'
   } else if (guest === 'true') {
     isGuest.value = true
   }
@@ -31,6 +34,7 @@ function handleLoginSuccess(payload) {
   currentUsername.value = payload.username || ''
   isAuthenticated.value = true
   isGuest.value = false
+  isAdmin.value = !!payload.isAdmin
 }
 
 function handleGuestContinue() {
@@ -46,6 +50,7 @@ function handleLogout() {
   isGuest.value = false
   authToken.value = null
   currentUsername.value = ''
+  isAdmin.value = false
 }
 </script>
 
@@ -61,7 +66,7 @@ function handleLogout() {
       <OceanMap />
 
       <!-- Sadece giriş yapmış kullanıcılar chatbot'u görebilir -->
-      <ChatWidget v-if="isAuthenticated" :token="authToken" />
+      <ChatWidget v-if="isAuthenticated" :token="authToken" :is-admin="isAdmin" />
 
       <!-- Sağ üstte kullanıcı bilgisi / dil seçimi / çıkış butonu -->
       <div class="user-bar">

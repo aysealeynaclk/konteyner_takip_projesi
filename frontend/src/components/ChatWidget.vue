@@ -2,9 +2,11 @@
 import { ref, nextTick, onMounted, computed } from 'vue'
 import axios from 'axios'
 import { language, t } from '../i18n'
+import AdminPanel from './AdminPanel.vue'
 
 const props = defineProps({
   token: { type: String, required: false },
+  isAdmin: { type: Boolean, default: false },
 })
 
 const API_URL = '/api/chat'
@@ -12,6 +14,7 @@ const HISTORY_API_URL = '/api/chat/sessions'
 
 const isOpen = ref(false)
 const showHistory = ref(false)
+const showAdminPanel = ref(false)
 const messages = ref([])
 const userInput = ref('')
 const isLoading = ref(false)
@@ -82,7 +85,13 @@ function toggleChat() {
 
 function toggleHistory() {
   showHistory.value = !showHistory.value
+  showAdminPanel.value = false
   if (showHistory.value) loadSessions()
+}
+
+function toggleAdminPanel() {
+  showAdminPanel.value = !showAdminPanel.value
+  showHistory.value = false
 }
 
 async function sendMessage() {
@@ -204,14 +213,14 @@ const hasActiveChat = computed(() => messages.value.length > 0)
 <template>
   <!-- Kapalıyken görünen amblem -->
   <button v-if="!isOpen" class="chat-bubble" @click="toggleChat">
-    <img src="/chat-logo.svg" alt="logo" class="bubble-img" />
+    <img src="/logo-icon.png" alt="logo" class="bubble-img" />
   </button>
 
   <!-- Açık sohbet penceresi -->
   <div v-else class="chat-window">
     <header class="chat-header">
       <div class="header-left">
-        <img src="/chat-logo.svg" alt="logo" class="header-img" />
+        <img src="/logo-icon.png" alt="logo" class="header-img" />
         <span class="header-title">{{ t('chatTitle') }}</span>
       </div>
       <div class="header-actions">
@@ -221,14 +230,20 @@ const hasActiveChat = computed(() => messages.value.length > 0)
         <button class="icon-btn" :title="t('chatNewChat')" @click="startNewChat">
           ✚
         </button>
+        <button v-if="isAdmin" class="icon-btn" :title="t('adminButtonTitle')" @click="toggleAdminPanel">
+          ➕
+        </button>
         <button class="icon-btn" :title="t('chatClose')" @click="toggleChat">
           ✕
         </button>
       </div>
     </header>
 
+    <!-- Admin paneli: yeni kayıt ekleme / arama-iptal etme -->
+    <AdminPanel v-if="showAdminPanel" :token="token" />
+
     <!-- Geçmiş sohbetler paneli -->
-    <div v-if="showHistory" class="history-panel">
+    <div v-else-if="showHistory" class="history-panel">
       <div v-if="pastSessions.length === 0" class="history-empty">
         {{ t('chatEmptyHistory') }}
       </div>
@@ -291,7 +306,7 @@ const hasActiveChat = computed(() => messages.value.length > 0)
       </div>
     </main>
 
-    <footer v-if="!showHistory" class="input-area">
+    <footer v-if="!showHistory && !showAdminPanel" class="input-area">
       <textarea
         v-model="userInput"
         :placeholder="t('chatInputPlaceholder')"
@@ -317,9 +332,9 @@ const hasActiveChat = computed(() => messages.value.length > 0)
   width: 72px;
   height: 72px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #0c4a6e, #0891b2);
+  background: transparent;
   border: none;
-  box-shadow: 0 4px 16px rgba(8, 145, 178, 0.5);
+  box-shadow: 0 4px 16px rgba(2, 6, 23, 0.35);
   cursor: pointer;
   display: flex;
   align-items: center;

@@ -182,9 +182,13 @@ onMounted(async () => {
     center: [25, 10],
     zoom: 2,
     minZoom: 2,
-    maxZoom: 10,
+    maxZoom: 5,
     worldCopyJump: true,
     zoomControl: false,
+    // Dikeyde dünyanın dışına (kutupların ötesine) sonsuz kaydırılmasını engeller.
+    // Yatayda geniş bırakıldı ki worldCopyJump'ın döngüsel kaydırması bozulmasın.
+    maxBounds: [[-85, -1000], [85, 1000]],
+    maxBoundsViscosity: 1.0,
   })
 
   L.control.zoom({ position: 'bottomleft' }).addTo(map)
@@ -235,9 +239,9 @@ onMounted(async () => {
 
     function highlightStyle() {
       return {
-        color: '#0f1f3d',
+        color: '#051627', // sitenin en koyu tonu (login arka planıyla aynı)
         weight: 1.2,
-        fillColor:  '#3F43BF',  // '#263B73',//'#1e2f5c', // lacivert (hover/seçili ülke)
+        fillColor: '#0c4a6e', // sitenin imza lacivert-teal rengi (giriş sayfası, butonlar)
         fillOpacity: 1,
       }
     }

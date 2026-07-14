@@ -52,6 +52,51 @@ const dict = {
     chatDelete: 'Sil',
     chatSaveTitle: 'Kaydet',
     chatCancelEdit: 'Vazgeç',
+    adminButtonTitle: 'Veri Ekle / Yönet',
+    adminPanelTitle: 'Admin Paneli',
+    adminAddTab: 'Yeni Kayıt Ekle',
+    adminSearchTab: 'Ara / İptal Et',
+    adminContainerNo: 'Konteyner No',
+    adminContainerNoPlaceholder: 'Örn. ABCD1234567',
+    adminEntryTime: 'Giriş Zamanı',
+    adminLocName: 'Saha Konumu (opsiyonel)',
+    adminLocNamePlaceholder: 'Örn. T-34ABC123-TIP-Y',
+    adminTransactionType: 'İşlem Tipi',
+    adminFreightKind: 'Yük Tipi',
+    adminDamage: 'Hasarlı',
+    adminSubmit: 'Kaydı Oluştur',
+    adminSearchPlaceholder: 'Aranacak konteyner no',
+    adminSearchButton: 'Ara',
+    adminRecentSearches: 'Son aramalar:',
+    adminNoResults: 'Kayıt bulunamadı.',
+    adminCloseExit: 'Çıkış Ekle',
+    adminCancelRecord: 'İptal Et',
+    adminConfirmCancel: 'Bu kaydı iptal etmek istediğinize emin misiniz? Bu işlem geri alınamaz.',
+    adminExitTime: 'Çıkış Zamanı',
+    adminSave: 'Kaydet',
+    adminCancelAction: 'Vazgeç',
+    adminSuccessCreate: 'Kayıt başarıyla oluşturuldu.',
+    adminSuccessExit: 'Çıkış kaydedildi.',
+    adminSuccessCancel: 'Kayıt iptal edildi.',
+    adminErrorGeneric: 'Bir hata oluştu, tekrar deneyin.',
+    adminFutureEntryError: 'Giriş zamanı gelecekte bir zaman olamaz.',
+    adminContainerNoValid: 'Format geçerli',
+    adminContainerNoInvalid: 'Format geçersiz (4 harf + 7 rakam olmalı)',
+    adminEditDetails: 'Değişiklikleri Kaydet',
+    adminSuccessUpdate: 'Kayıt güncellendi.',
+    adminStatusOpen: 'Sahada (açık)',
+    adminStatusComplete: 'Tamamlandı',
+    adminStatusCancel: 'İptal edildi',
+    transactionTypeReceiveExport: 'İhracat Kabulü',
+    transactionTypeDeliverImport: 'İthalat Teslimatı',
+    transactionTypeDeliverEmpty: 'Boş Konteyner Teslimatı',
+    transactionTypeReceiveEmpty: 'Boş Konteyner Kabulü',
+    transactionTypeDrayOffExport: 'İhracat Saha İçi Taşıma',
+    transactionTypeDrayOffImport: 'İthalat Saha İçi Taşıma',
+    transactionTypeDeliverBreakBulk: 'Parça Yük Teslimatı',
+    freightKindFCL: 'Dolu (FCL)',
+    freightKindMTY: 'Boş (MTY)',
+    freightKindBBK: 'Parça Yük (BBK)',
   },
   en: {
     loginSubtitle: 'Sign in to your account',
@@ -92,6 +137,51 @@ const dict = {
     chatDelete: 'Delete',
     chatSaveTitle: 'Save',
     chatCancelEdit: 'Cancel',
+    adminButtonTitle: 'Add / Manage Data',
+    adminPanelTitle: 'Admin Panel',
+    adminAddTab: 'Add New Record',
+    adminSearchTab: 'Search / Cancel',
+    adminContainerNo: 'Container No',
+    adminContainerNoPlaceholder: 'e.g. ABCD1234567',
+    adminEntryTime: 'Entry Time',
+    adminLocName: 'Yard Location (optional)',
+    adminLocNamePlaceholder: 'e.g. T-34ABC123-TIP-Y',
+    adminTransactionType: 'Transaction Type',
+    adminFreightKind: 'Freight Kind',
+    adminDamage: 'Damaged',
+    adminSubmit: 'Create Record',
+    adminSearchPlaceholder: 'Container no to search',
+    adminSearchButton: 'Search',
+    adminRecentSearches: 'Recent searches:',
+    adminNoResults: 'No records found.',
+    adminCloseExit: 'Add Exit',
+    adminCancelRecord: 'Cancel',
+    adminConfirmCancel: 'Are you sure you want to cancel this record? This cannot be undone.',
+    adminExitTime: 'Exit Time',
+    adminSave: 'Save',
+    adminCancelAction: 'Cancel',
+    adminSuccessCreate: 'Record created successfully.',
+    adminSuccessExit: 'Exit recorded.',
+    adminSuccessCancel: 'Record cancelled.',
+    adminErrorGeneric: 'Something went wrong, please try again.',
+    adminFutureEntryError: 'Entry time cannot be in the future.',
+    adminContainerNoValid: 'Format is valid',
+    adminContainerNoInvalid: 'Invalid format (must be 4 letters + 7 digits)',
+    adminEditDetails: 'Save Changes',
+    adminSuccessUpdate: 'Record updated.',
+    adminStatusOpen: 'In yard (open)',
+    adminStatusComplete: 'Complete',
+    adminStatusCancel: 'Cancelled',
+    transactionTypeReceiveExport: 'Export Receipt',
+    transactionTypeDeliverImport: 'Import Delivery',
+    transactionTypeDeliverEmpty: 'Empty Container Delivery',
+    transactionTypeReceiveEmpty: 'Empty Container Receipt',
+    transactionTypeDrayOffExport: 'Export In-Yard Move',
+    transactionTypeDrayOffImport: 'Import In-Yard Move',
+    transactionTypeDeliverBreakBulk: 'Break Bulk Delivery',
+    freightKindFCL: 'Full (FCL)',
+    freightKindMTY: 'Empty (MTY)',
+    freightKindBBK: 'Break Bulk (BBK)',
   },
 }
 
@@ -162,4 +252,36 @@ export function countryName(trName) {
   if (!trName) return ''
   if (language.value === 'tr') return trName
   return countryNamesEn[trName] || trName
+}
+
+const TRANSACTION_TYPE_KEYS = {
+  ReceiveExport: 'transactionTypeReceiveExport',
+  DeliverImport: 'transactionTypeDeliverImport',
+  DeliverEmpty: 'transactionTypeDeliverEmpty',
+  ReceiveEmpty: 'transactionTypeReceiveEmpty',
+  DrayOffExport: 'transactionTypeDrayOffExport',
+  DrayOffImport: 'transactionTypeDrayOffImport',
+  DeliverBreakBulk: 'transactionTypeDeliverBreakBulk',
+}
+
+const FREIGHT_KIND_KEYS = {
+  FCL: 'freightKindFCL',
+  MTY: 'freightKindMTY',
+  BBK: 'freightKindBBK',
+}
+
+export function transactionTypeLabel(value) {
+  const key = TRANSACTION_TYPE_KEYS[value]
+  return key ? t(key) : value
+}
+
+export function freightKindLabel(value) {
+  const key = FREIGHT_KIND_KEYS[value]
+  return key ? t(key) : value
+}
+
+export function recordStatusLabel(record) {
+  if (record.transaction_status === 'CANCEL') return t('adminStatusCancel')
+  if (!record.time_exited_yard) return t('adminStatusOpen')
+  return t('adminStatusComplete')
 }

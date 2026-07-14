@@ -43,9 +43,26 @@ def main():
     # Konteyner numarası boş olan satırları at (varsa)
     clean_df = clean_df.dropna(subset=["container_no"])
 
-    clean_df.to_sql("gate_transactions", conn, if_exists="replace", index=False)
-
     cursor = conn.cursor()
+    # Tabloyu elle, id (PRIMARY KEY) sütunuyla oluşturuyoruz ki admin panelinden
+    # eklenen/kapatılan/iptal edilen kayıtlar tekil olarak referans alınabilsin.
+    cursor.execute("DROP TABLE IF EXISTS gate_transactions")
+    cursor.execute("""
+        CREATE TABLE gate_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            container_no TEXT,
+            time_entered_yard TIMESTAMP,
+            time_exited_yard TIMESTAMP,
+            transaction_status TEXT,
+            loc_name TEXT,
+            truck_visit_minutes_in_yard REAL,
+            transaction_type TEXT,
+            damage INTEGER,
+            freight_kind TEXT
+        )
+    """)
+    clean_df.to_sql("gate_transactions", conn, if_exists="append", index=False)
+
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_clean_container_no
         ON gate_transactions(container_no)
