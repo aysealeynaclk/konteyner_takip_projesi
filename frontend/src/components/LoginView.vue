@@ -313,4 +313,12 @@ function handleEnter(e) {
 .guest-btn:hover {
   background: rgba(255, 255, 255, 0.06);
 }
+
+/* Mobil: dar ekranlarda kart daha az iç boşlukla nefes alsın */
+@media (max-width: 420px) {
+  .login-card {
+    max-width: 94vw;
+    padding: 1.75rem 1.25rem;
+  }
+}
 </style>

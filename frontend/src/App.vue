@@ -145,4 +145,23 @@ function handleLogout() {
   background: rgba(34, 211, 238, 0.3);
   color: white;
 }
+
+/* Mobil: dar ekranlarda kullanıcı çubuğu daralsın, taşmasın */
+@media (max-width: 400px) {
+  .user-bar {
+    top: 10px;
+    right: 10px;
+    padding: 0.3rem 0.3rem 0.3rem 0.6rem;
+    font-size: 0.75rem;
+    gap: 0.4rem;
+  }
+
+  .lang-switch button {
+    padding: 0.2rem 0.4rem;
+  }
+
+  .logout-btn {
+    padding: 0.3rem 0.55rem;
+  }
+}
 </style>

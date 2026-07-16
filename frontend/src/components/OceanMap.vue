@@ -354,7 +354,12 @@ onMounted(async () => {
           <span class="weather-text">{{ weatherInfo(selected.weather.weathercode).label }} • {{ Math.round(selected.weather.temperature) }}°C</span>
         </div>
       </div>
-      <div v-if="selected.ports.length > 0" class="has-ports">{{ t('hasPort') }}</div>
+      <div v-if="selected.ports.length > 0" class="has-ports">
+        <div>{{ t('hasPort') }}</div>
+        <ul v-if="selected.ports.some(p => p.name)" class="corex-list">
+          <li v-for="(p, idx) in selected.ports.filter(p => p.name)" :key="idx">📍 {{ p.name }}</li>
+        </ul>
+      </div>
       <div v-else class="no-ports">{{ t('noPort') }}</div>
     </div>
   </div>
@@ -402,6 +407,16 @@ onMounted(async () => {
 
 .leaflet-control-attribution a {
   color: #7dd3fc !important;
+}
+
+/* Mobil: zoom +/- butonları parmakla dokunmak için biraz büyüsün */
+@media (max-width: 600px) {
+  .leaflet-control-zoom a {
+    width: 36px !important;
+    height: 36px !important;
+    line-height: 36px !important;
+    font-size: 18px !important;
+  }
 }
 </style>
 

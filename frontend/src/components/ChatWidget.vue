@@ -639,4 +639,30 @@ const hasActiveChat = computed(() => messages.value.length > 0)
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* Mobil: sohbet penceresi neredeyse tam ekran olsun, sabit 380x560 masaüstü
+   boyutu küçük telefon ekranlarında taşma/kesilme yaratıyordu. */
+@media (max-width: 600px) {
+  .chat-bubble {
+    bottom: 16px;
+    right: 16px;
+    width: 64px;
+    height: 64px;
+  }
+
+  .bubble-img {
+    width: 64px;
+    height: 64px;
+  }
+
+  .chat-window {
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: auto;
+    height: auto;
+    max-height: none;
+  }
+}
 </style>

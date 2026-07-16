@@ -554,7 +554,7 @@ from pydantic import BaseModel
 load_dotenv()
 
 client = OpenAI(
-    api_key="csk-9t84x9rh2khd8pwtvjvh289jyn63j9x4j5c3vc92y68dcwk3",
+    api_key=os.getenv("CEREBRAS_API_KEY"),
     base_url="https://api.cerebras.ai/v1",
 )
 

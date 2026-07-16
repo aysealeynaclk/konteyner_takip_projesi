@@ -3,66 +3,37 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent / 'database' / 'containers.db'
 
-# Corex'in gerçek limanı olan 55 ülke — hepsi has_port=1.
-# Şehir/koordinat sadece bilinen 7 liman için dolu; diğerlerinde henüz
-# kesin liman şehri/koordinatı olmadığı için boş bırakıldı.
-# (ülke, liman var mı (1/0), liman şehri, lat, lng)
+# Corex'in gerçek limanı olan sadece 12 ülke — has_port=1.
+# Bu listede olmayan hiçbir ülke ports tablosunda yer almaz; harita bu yüzden
+# o ülkelere tıklandığında otomatik olarak "liman bulunmuyor" gösterir.
+# Bazı ülkelerin birden fazla liman/terminali olduğu için o ülkeler birden
+# fazla satırla (her liman için bir satır) temsil ediliyor.
+# (ülke, liman var mı (1/0), liman/terminal adı, lat, lng)
 COUNTRIES = [
-    ("Kanada", 1, None, None, None),
-    ("Amerika Birleşik Devletleri", 1, None, None, None),
-    ("Meksika", 1, None, None, None),
-    ("Guatemala", 1, None, None, None),
-    ("El Salvador", 1, None, None, None),
-    ("Honduras", 1, None, None, None),
-    ("Kosta Rika", 1, None, None, None),
-    ("Panama", 1, None, None, None),
-    ("Kolombiya", 1, "Cartagena", 10.39, -75.51),
-    ("Ekvador", 1, None, None, None),
-    ("Peru", 1, "Callao", -12.05, -77.13),
-    ("Brezilya", 1, None, None, None),
-    ("Şili", 1, None, None, None),
-    ("Arjantin", 1, None, None, None),
-    ("Uruguay", 1, None, None, None),
-    ("Norveç", 1, None, None, None),
-    ("Finlandiya", 1, None, None, None),
-    ("İsveç", 1, "Göteborg", 57.71, 11.97),
-    ("Litvanya", 1, None, None, None),
-    ("Hollanda", 1, None, None, None),
-    ("Belçika", 1, None, None, None),
-    ("Danimarka", 1, None, None, None),
-    ("İngiltere", 1, None, None, None),
-    ("İrlanda", 1, None, None, None),
-    ("Fransa", 1, None, None, None),
-    ("İsviçre", 1, None, None, None),
-    ("İspanya", 1, None, None, None),
-    ("Portekiz", 1, "Lizbon", 38.72, -9.14),
-    ("Kosova", 1, None, None, None),
-    ("Kuzey Makedonya", 1, None, None, None),
-    ("Sırbistan", 1, None, None, None),
-    ("İtalya", 1, None, None, None),
-    ("Malta", 1, None, None, None),
-    ("Yunanistan", 1, None, None, None),
-    ("Arnavutluk", 1, "Durrës", 41.31, 19.45),
-    ("Fas", 1, None, None, None),
-    ("Gana", 1, None, None, None),
-    ("Fildişi Sahili", 1, None, None, None),
-    ("Zambiya", 1, None, None, None),
-    ("Angola", 1, None, None, None),
-    ("Namibya", 1, None, None, None),
-    ("Mozambik", 1, None, None, None),
-    ("Zimbabve", 1, None, None, None),
-    ("Malavi", 1, None, None, None),
-    ("Tanzanya", 1, None, None, None),
-    ("Kazakistan", 1, "Aktau", 43.65, 51.20),
-    ("Özbekistan", 1, None, None, None),
-    ("Türkiye", 1, "Kocaeli", 40.85, 29.88),
-    ("Çin", 1, None, None, None),
-    ("Bangladeş", 1, None, None, None),
-    ("Hindistan", 1, None, None, None),
-    ("Vietnam", 1, None, None, None),
-    ("Tayland", 1, None, None, None),
-    ("Singapur", 1, None, None, None),
-    ("Endonezya", 1, None, None, None),
+    ("Türkiye", 1, "Gebze", 40.80, 29.43),
+    ("Türkiye", 1, "Körfez", 40.77, 29.75),
+    ("Türkiye", 1, "Ankara", 39.93, 32.86),
+    ("Norveç", 1, "Oslo", 59.91, 10.75),
+    ("İsveç", 1, "Gävle", 60.67, 17.14),
+    ("İsveç", 1, "Stockholm Nord", 58.93, 17.90),
+    ("Portekiz", 1, "Liscont", None, None),
+    ("Portekiz", 1, "Elvas", None, None),
+    ("Portekiz", 1, "Tersado", None, None),
+    ("Portekiz", 1, "Setúbal", 38.52, -8.89),
+    ("Portekiz", 1, "Aveiro", 40.64, -8.65),
+    ("Portekiz", 1, "Leixões", 41.18, -8.70),
+    ("Portekiz", 1, "Sotagus", None, None),
+    ("Portekiz", 1, "Figueira Da Foz", 40.15, -8.86),
+    ("İspanya", 1, "Huelva", 37.26, -6.95),
+    ("İspanya", 1, "Ferrol", 43.49, -8.24),
+    ("Ekvador", 1, "Puerto Bolívar", -3.26, -79.95),
+    ("Peru", 1, "Paita", -5.09, -81.11),
+    ("Guatemala", 1, "YILPORT Quetzal", 13.92, -90.79),
+    ("El Salvador", 1, "Acajutla", 13.59, -89.83),
+    ("El Salvador", 1, "La Unión", 13.34, -87.84),
+    ("Malta", 1, "Marsaxlokk", 35.84, 14.54),
+    ("İtalya", 1, "Taranto", 40.47, 17.24),
+    ("Gana", 1, "Takoradi", 4.90, -1.76),
 ]
 
 
@@ -72,7 +43,7 @@ def create_ports_table(conn):
     cur.execute('''
         CREATE TABLE ports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            country TEXT NOT NULL UNIQUE,
+            country TEXT NOT NULL,
             has_port INTEGER NOT NULL DEFAULT 0,
             name TEXT,
             lat REAL,
@@ -89,7 +60,7 @@ def seed_ports(conn):
         COUNTRIES,
     )
     conn.commit()
-    print(f'Seeded ports table with {len(COUNTRIES)} countries.')
+    print(f'Seeded ports table with {len(COUNTRIES)} rows.')
 
 
 def main():
