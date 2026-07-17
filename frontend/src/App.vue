@@ -17,12 +17,13 @@ onMounted(() => {
   const token = localStorage.getItem('corex_token')
   const guest = localStorage.getItem('corex_guest')
   const uname = localStorage.getItem('corex_username')
+  const displayName = localStorage.getItem('corex_display_name')
   const admin = localStorage.getItem('corex_is_admin')
 
   if (token) {
     authToken.value = token
     isAuthenticated.value = true
-    currentUsername.value = uname || ''
+    currentUsername.value = displayName || uname || ''
     isAdmin.value = admin === 'true'
   } else if (guest === 'true') {
     isGuest.value = true
@@ -31,7 +32,7 @@ onMounted(() => {
 
 function handleLoginSuccess(payload) {
   authToken.value = payload.token
-  currentUsername.value = payload.username || ''
+  currentUsername.value = payload.displayName || payload.username || ''
   isAuthenticated.value = true
   isGuest.value = false
   isAdmin.value = !!payload.isAdmin
@@ -44,6 +45,7 @@ function handleGuestContinue() {
 function handleLogout() {
   localStorage.removeItem('corex_token')
   localStorage.removeItem('corex_username')
+  localStorage.removeItem('corex_display_name')
   localStorage.removeItem('corex_is_admin')
   localStorage.removeItem('corex_guest')
   isAuthenticated.value = false

@@ -4,6 +4,24 @@ import axios from 'axios'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { t, countryName } from '../i18n'
+import { selectedFacility, facilityLocked } from '../facility'
+
+// Haritadaki liman adından gerçek facility_id'ye eşleme. Şimdilik sadece
+// gerçek konteyner verisi olan Gebze (GBZ), Körfez (YCT) ve Ankara (ANK) tıklanabilir.
+const PORT_NAME_TO_FACILITY = { Gebze: 'GBZ', Körfez: 'YCT', Ankara: 'ANK' }
+
+const lockedNotice = ref(false)
+
+function selectFacility(code) {
+  // Aktif bir sohbet varken (en az 1 mesaj) liman haritadan da değiştirilemez —
+  // ChatWidget bu kilidi facility.js üzerinden günceller.
+  if (facilityLocked.value) {
+    lockedNotice.value = true
+    setTimeout(() => { lockedNotice.value = false }, 3000)
+    return
+  }
+  selectedFacility.value = code
+}
 
 const mapContainer = ref(null)
 
@@ -357,8 +375,21 @@ onMounted(async () => {
       <div v-if="selected.ports.length > 0" class="has-ports">
         <div>{{ t('hasPort') }}</div>
         <ul v-if="selected.ports.some(p => p.name)" class="corex-list">
-          <li v-for="(p, idx) in selected.ports.filter(p => p.name)" :key="idx">📍 {{ p.name }}</li>
+          <li v-for="(p, idx) in selected.ports.filter(p => p.name)" :key="idx">
+            <button
+              v-if="PORT_NAME_TO_FACILITY[p.name]"
+              class="port-facility-link"
+              :class="{ active: selectedFacility === PORT_NAME_TO_FACILITY[p.name] }"
+              :title="t('facilitySelectHint')"
+              @click="selectFacility(PORT_NAME_TO_FACILITY[p.name])"
+            >📍 {{ p.name }} <span v-if="selectedFacility === PORT_NAME_TO_FACILITY[p.name]">✅</span></button>
+            <span v-else>📍 {{ p.name }}</span>
+          </li>
         </ul>
+        <p v-if="lockedNotice" class="facility-locked-notice">{{ t('facilityLockedNotice') }}</p>
+        <p v-if="selected.ports.some(p => selectedFacility === PORT_NAME_TO_FACILITY[p.name])" class="facility-confirm">
+          {{ t('facilitySelectedInfo') }}
+        </p>
       </div>
       <div v-else class="no-ports">{{ t('noPort') }}</div>
     </div>
@@ -447,6 +478,19 @@ onMounted(async () => {
 .no-ports { color: rgba(255,255,255,0.75) }
 
 .has-ports { color: #bbf7d0; font-weight:600; margin-bottom:8px }
+
+.port-facility-link {
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline dotted;
+}
+.port-facility-link.active { text-decoration: none; color: #bbf7d0; }
+.facility-confirm { color: #bbf7d0; font-size: 0.85rem; margin: 6px 0 0; font-weight: 600; }
+.facility-locked-notice { color: #fca5a5; font-size: 0.85rem; margin: 6px 0 0; font-weight: 600; }
 
 /* Compact weather */
 .weather-compact-row { display:flex; gap:8px; align-items:center }

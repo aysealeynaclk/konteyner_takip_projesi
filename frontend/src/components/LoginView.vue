@@ -26,13 +26,14 @@ async function handleLogin() {
       password: password.value,
     })
 
-    const { token, username: uname, is_admin } = response.data
+    const { token, username: uname, display_name, is_admin } = response.data
 
     localStorage.setItem('corex_token', token)
     localStorage.setItem('corex_username', uname)
+    localStorage.setItem('corex_display_name', display_name || uname)
     localStorage.setItem('corex_is_admin', is_admin)
 
-    emit('login-success', { token, username: uname, isAdmin: is_admin })
+    emit('login-success', { token, username: uname, displayName: display_name || uname, isAdmin: is_admin })
   } catch (error) {
     if (error.response?.status === 401) {
       errorMessage.value = t('wrongCredentials')

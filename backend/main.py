@@ -87,13 +87,34 @@ class LoginRequest(BaseModel):
     password: str
 
 
+_TR_CHAR_MAP = str.maketrans({
+    'ç': 'c', 'Ç': 'c',
+    'ğ': 'g', 'Ğ': 'g',
+    'ı': 'i', 'İ': 'i',
+    'ö': 'o', 'Ö': 'o',
+    'ş': 's', 'Ş': 's',
+    'ü': 'u', 'Ü': 'u',
+})
+
+
+def normalize_username(value: str) -> str:
+    """Kullanıcı adı karşılaştırmasını büyük/küçük harf ve Türkçe karakter
+    (ş/s, ı/i, ç/c vb.) farkından bağımsız hale getirir."""
+    if not value:
+        return ""
+    return value.strip().translate(_TR_CHAR_MAP).lower()
+
+
 @app.post("/api/login")
 def login(request: LoginRequest):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, username, password_hash, is_admin FROM users WHERE username = ?", (request.username,))
-    row = cursor.fetchone()
+    cursor.execute("SELECT id, username, password_hash, is_admin, display_name FROM users")
+    rows = cursor.fetchall()
     conn.close()
+
+    target = normalize_username(request.username)
+    row = next((r for r in rows if normalize_username(r["username"]) == target), None)
 
     if not row:
         raise HTTPException(status_code=401, detail="Kullanıcı adı veya şifre hatalı.")
@@ -108,6 +129,7 @@ def login(request: LoginRequest):
     return {
         "token": token,
         "username": user["username"],
+        "display_name": user["display_name"] or user["username"],
         "is_admin": bool(user["is_admin"]),
         "user_id": int(user["id"]),
     }
@@ -142,6 +164,8 @@ def ensure_chat_history_tables():
         cursor.execute("ALTER TABLE chat_sessions ADD COLUMN user_id INTEGER")
     if "username" not in existing_columns:
         cursor.execute("ALTER TABLE chat_sessions ADD COLUMN username TEXT")
+    if "facility_id" not in existing_columns:
+        cursor.execute("ALTER TABLE chat_sessions ADD COLUMN facility_id TEXT")
 
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id_updated_at
@@ -241,7 +265,7 @@ def _generate_llm_title(first_user_message: str) -> str:
     """LLM'e sohbeti kısa bir başlığa özetlettirir. Hata olursa None döner."""
     try:
         response = client.chat.completions.create(
-            model="gpt-oss-120b",
+            model=GROQ_MODEL,
             messages=[
                 {
                     "role": "system",
@@ -313,7 +337,7 @@ def list_chat_sessions(user_id: int):
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, user_id, username, title, messages_json, created_at, updated_at
+        SELECT id, user_id, username, title, messages_json, created_at, updated_at, facility_id
         FROM chat_sessions
         WHERE user_id = ?
         ORDER BY datetime(updated_at) DESC, id DESC
@@ -330,7 +354,7 @@ def get_chat_session(session_id: int, user_id: int):
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, user_id, username, title, messages_json, created_at, updated_at
+        SELECT id, user_id, username, title, messages_json, created_at, updated_at, facility_id
         FROM chat_sessions
         WHERE id = ? AND user_id = ?
         """,
@@ -341,7 +365,7 @@ def get_chat_session(session_id: int, user_id: int):
     return _row_to_chat_session(row) if row else None
 
 
-def save_chat_session(user_id: int, username: str, messages, session_id: Optional[int] = None):
+def save_chat_session(user_id: int, username: str, messages, session_id: Optional[int] = None, facility_id: Optional[str] = None):
     title = _chat_session_title(messages)
     messages_json = json.dumps(messages, ensure_ascii=False)
 
@@ -351,28 +375,32 @@ def save_chat_session(user_id: int, username: str, messages, session_id: Optiona
     if session_id is None:
         cursor.execute(
             """
-            INSERT INTO chat_sessions (user_id, username, title, messages_json)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO chat_sessions (user_id, username, title, messages_json, facility_id)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (user_id, username, title, messages_json),
+            (user_id, username, title, messages_json, facility_id),
         )
         session_id = cursor.lastrowid
     else:
         cursor.execute(
-            "SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?",
+            "SELECT id, facility_id FROM chat_sessions WHERE id = ? AND user_id = ?",
             (session_id, user_id),
         )
-        if not cursor.fetchone():
+        existing = cursor.fetchone()
+        if not existing:
             conn.close()
             raise HTTPException(status_code=404, detail="Sohbet geçmişi bulunamadı.")
+        # Mevcut sohbetin liman bilgisi zaten varsa korunur (bir sohbet içinde
+        # liman değiştirilemez); yoksa (eski kayıtlar) yeni değer atanır.
+        facility_id = existing["facility_id"] or facility_id
 
         cursor.execute(
             """
             UPDATE chat_sessions
-            SET user_id = ?, username = ?, title = ?, messages_json = ?, updated_at = CURRENT_TIMESTAMP
+            SET user_id = ?, username = ?, title = ?, messages_json = ?, facility_id = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND user_id = ?
             """,
-            (user_id, username, title, messages_json, session_id, user_id),
+            (user_id, username, title, messages_json, facility_id, session_id, user_id),
         )
 
     conn.commit()
@@ -466,13 +494,20 @@ def api_get_countries():
     return {'count': len(countries), 'countries': countries}
 
 
+@app.get('/api/facilities')
+def api_list_facilities(current_user: dict = Depends(get_current_user)):
+    return {'facilities': list_known_facilities()}
+
+
 # ---------------------------------------------------------
 # ADMIN ENDPOINT'LERİ (sadece is_admin=True kullanıcılar)
 # ---------------------------------------------------------
 
 class NewContainerEntryRequest(BaseModel):
     container_no: str
+    facility_id: str
     time_entered_yard: str
+    time_exited_yard: Optional[str] = None
     transaction_type: str
     freight_kind: str
     loc_name: Optional[str] = None
@@ -491,14 +526,32 @@ class UpdateContainerDetailsRequest(BaseModel):
 
 @app.get("/api/admin/meta")
 def api_admin_meta(current_admin: dict = Depends(get_current_admin)):
-    return {"transaction_types": TRANSACTION_TYPES, "freight_kinds": FREIGHT_KINDS}
+    return {"transaction_types": TRANSACTION_TYPES, "freight_kinds": FREIGHT_KINDS, "facilities": list_known_facilities()}
+
+
+@app.get("/api/admin/loc-options")
+def api_admin_loc_options(
+    facility_id: str,
+    loc_type: str,
+    block: Optional[str] = None,
+    current_admin: dict = Depends(get_current_admin),
+):
+    if loc_type == "TRUCK":
+        return {"plates": list_truck_plates(facility_id)}
+    if loc_type == "YARD":
+        if block:
+            return {"addresses": list_bay_rows(facility_id, block)}
+        return {"blocks": list_loc_blocks(facility_id)}
+    raise HTTPException(status_code=400, detail="Geçersiz loc_type. 'TRUCK' veya 'YARD' olmalı.")
 
 
 @app.post("/api/admin/containers")
 def api_create_container_entry(request: NewContainerEntryRequest, current_admin: dict = Depends(get_current_admin)):
     record = create_container_entry(
         container_no=request.container_no,
+        facility_id=request.facility_id,
         time_entered_yard=request.time_entered_yard,
+        time_exited_yard=request.time_exited_yard,
         transaction_type=request.transaction_type,
         freight_kind=request.freight_kind,
         loc_name=request.loc_name,
@@ -508,8 +561,8 @@ def api_create_container_entry(request: NewContainerEntryRequest, current_admin:
 
 
 @app.get("/api/admin/containers/search")
-def api_search_containers(container_no: str, current_admin: dict = Depends(get_current_admin)):
-    records = search_container_records(container_no)
+def api_search_containers(container_no: str, facility_id: Optional[str] = None, current_admin: dict = Depends(get_current_admin)):
+    records = search_container_records(container_no, facility_id=facility_id)
     return {"count": len(records), "records": records}
 
 
@@ -554,9 +607,10 @@ from pydantic import BaseModel
 load_dotenv()
 
 client = OpenAI(
-    api_key=os.getenv("CEREBRAS_API_KEY"),
-    base_url="https://api.cerebras.ai/v1",
+    api_key=os.getenv("GROQ_API_KEY"),
+    base_url="https://api.groq.com/openai/v1",
 )
+GROQ_MODEL = "openai/gpt-oss-120b"
 
 SYSTEM_INSTRUCTION = """
 Sen bir liman konteyner takip sisteminin asistanısın.
@@ -780,48 +834,54 @@ _GATE_COLUMNS = """
 """
 
 
-def get_container_entry(container_no: str):
+def get_container_entry(container_no: str, facility_id: Optional[str] = None):
     """Bir konteynerin limana/sahaya giriş kaydını döner (iptal edilmiş kayıtlar hariç)."""
     conn = get_connection()
     cursor = conn.cursor()
+    facility_clause = " AND facility_id = ?" if facility_id else ""
+    params = (container_no, facility_id) if facility_id else (container_no,)
     cursor.execute(f"""
         SELECT {_GATE_COLUMNS}
         FROM gate_transactions
-        WHERE container_no = ? AND transaction_status != 'CANCEL'
+        WHERE container_no = ? AND transaction_status != 'CANCEL'{facility_clause}
         ORDER BY time_entered_yard DESC
         LIMIT 1
-    """, (container_no,))
+    """, params)
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
 
 
-def get_container_exit(container_no: str):
+def get_container_exit(container_no: str, facility_id: Optional[str] = None):
     """Bir konteynerin limandan/sahadan çıkış kaydını döner (iptal edilmiş kayıtlar hariç)."""
     conn = get_connection()
     cursor = conn.cursor()
+    facility_clause = " AND facility_id = ?" if facility_id else ""
+    params = (container_no, facility_id) if facility_id else (container_no,)
     cursor.execute(f"""
         SELECT {_GATE_COLUMNS}
         FROM gate_transactions
-        WHERE container_no = ? AND time_exited_yard IS NOT NULL AND transaction_status != 'CANCEL'
+        WHERE container_no = ? AND time_exited_yard IS NOT NULL AND transaction_status != 'CANCEL'{facility_clause}
         ORDER BY time_exited_yard DESC
         LIMIT 1
-    """, (container_no,))
+    """, params)
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
 
-def get_container_status(container_no: str):
+def get_container_status(container_no: str, facility_id: Optional[str] = None):
     """Bir konteynerin şu anki durumunu belirler (iptal edilmiş kayıtlar hariç)."""
     conn = get_connection()
     cursor = conn.cursor()
+    facility_clause = " AND facility_id = ?" if facility_id else ""
+    params = (container_no, facility_id) if facility_id else (container_no,)
     cursor.execute(f"""
         SELECT {_GATE_COLUMNS}
         FROM gate_transactions
-        WHERE container_no = ? AND transaction_status != 'CANCEL'
+        WHERE container_no = ? AND transaction_status != 'CANCEL'{facility_clause}
         ORDER BY time_entered_yard DESC
         LIMIT 1
-    """, (container_no,))
+    """, params)
     row = cursor.fetchone()
     conn.close()
 
@@ -833,31 +893,35 @@ def get_container_status(container_no: str):
     return {"status": status, "record": record}
 
 
-def get_containers_by_date_range(start_date: str, end_date: str):
+def get_containers_by_date_range(start_date: str, end_date: str, facility_id: Optional[str] = None):
     """Belirli bir tarih aralığında giriş yapan konteynerleri döner (iptal edilmiş kayıtlar hariç)."""
     conn = get_connection()
     cursor = conn.cursor()
+    facility_clause = " AND facility_id = ?" if facility_id else ""
+    params = (start_date, end_date, facility_id) if facility_id else (start_date, end_date)
     cursor.execute(f"""
         SELECT {_GATE_COLUMNS}
         FROM gate_transactions
         WHERE date(time_entered_yard) BETWEEN date(?) AND date(?)
-          AND transaction_status != 'CANCEL'
+          AND transaction_status != 'CANCEL'{facility_clause}
         ORDER BY time_entered_yard ASC
-    """, (start_date, end_date))
+    """, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
 
-def list_containers_in_yard():
+def list_containers_in_yard(facility_id: Optional[str] = None):
     """Şu anda limanda/sahada olan konteynerleri listeler (iptal edilmiş kayıtlar hariç)."""
     conn = get_connection()
     cursor = conn.cursor()
+    facility_clause = " AND facility_id = ?" if facility_id else ""
+    params = (facility_id,) if facility_id else ()
     cursor.execute(f"""
         SELECT {_GATE_COLUMNS}
         FROM gate_transactions
-        WHERE time_exited_yard IS NULL AND transaction_status != 'CANCEL'
+        WHERE time_exited_yard IS NULL AND transaction_status != 'CANCEL'{facility_clause}
         ORDER BY time_entered_yard DESC
-    """)
+    """, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -880,21 +944,95 @@ FREIGHT_KINDS = ["FCL", "MTY", "BBK"]
 
 _ADMIN_COLUMNS = """
     id, container_no, time_entered_yard, time_exited_yard, transaction_status,
-    loc_name, truck_visit_minutes_in_yard, transaction_type, damage, freight_kind
+    loc_name, truck_visit_minutes_in_yard, transaction_type, damage, freight_kind, facility_id
 """
+
+
+def list_known_facilities():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT DISTINCT facility_id FROM gate_transactions WHERE facility_id IS NOT NULL ORDER BY facility_id"
+    )
+    facilities = [row["facility_id"] for row in cursor.fetchall()]
+    conn.close()
+    return facilities
+
+
+# Saha konumu (loc_name) seçici için: geçmiş verideki gerçek plaka/blok/adres
+# bilgilerini döner, admin panelinde hiyerarşik seçim (LocType -> Blok/Plaka ->
+# Bay-Row/Kat) için kullanılır.
+_TRUCK_PLATE_PATTERN = re.compile(r'^T-([A-Z0-9]+)')
+
+
+def list_loc_blocks(facility_id: str):
+    """Bir limanda YARD tipi kayıtlarda görülmüş blok harflerini döner."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT DISTINCT substr(loc_slot, 1, 1) as block
+        FROM gate_transactions
+        WHERE facility_id = ? AND loc_type = 'YARD' AND loc_slot IS NOT NULL
+        ORDER BY block
+        """,
+        (facility_id,),
+    )
+    blocks = [row["block"] for row in cursor.fetchall() if row["block"]]
+    conn.close()
+    return blocks
+
+
+def list_bay_rows(facility_id: str, block: str):
+    """Belirli bir blokta görülmüş bay/row (+ varsa kat) adreslerini döner."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT DISTINCT loc_slot, loc_tier
+        FROM gate_transactions
+        WHERE facility_id = ? AND loc_type = 'YARD' AND loc_slot LIKE ?
+        ORDER BY loc_slot
+        """,
+        (facility_id, f"{block}%"),
+    )
+    rows = [{"loc_slot": r["loc_slot"], "loc_tier": r["loc_tier"]} for r in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
+def list_truck_plates(facility_id: str):
+    """Bir limanda TRUCK tipi kayıtlarda görülmüş plakaları döner (loc_name'den parse edilir)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT DISTINCT loc_name FROM gate_transactions WHERE facility_id = ? AND loc_type = 'TRUCK' AND loc_name IS NOT NULL",
+        (facility_id,),
+    )
+    plates = set()
+    for row in cursor.fetchall():
+        match = _TRUCK_PLATE_PATTERN.match(row["loc_name"])
+        if match:
+            plates.add(match.group(1))
+    conn.close()
+    return sorted(plates)
 
 
 def create_container_entry(
     container_no: str,
+    facility_id: str,
     time_entered_yard: str,
     transaction_type: str,
     freight_kind: str,
+    time_exited_yard: Optional[str] = None,
     loc_name: Optional[str] = None,
     damage: bool = False,
 ):
     container_no = container_no.strip().upper()
     if not CONTAINER_NO_FULL_PATTERN.match(container_no):
         raise HTTPException(status_code=400, detail="Konteyner no formatı geçersiz. Beklenen format: 4 harf + 7 rakam (örn. ABCD1234567).")
+    if facility_id not in list_known_facilities():
+        raise HTTPException(status_code=400, detail="Geçersiz liman seçimi.")
     if transaction_type not in TRANSACTION_TYPES:
         raise HTTPException(status_code=400, detail=f"Geçersiz işlem tipi. Geçerli değerler: {', '.join(TRANSACTION_TYPES)}")
     if freight_kind not in FREIGHT_KINDS:
@@ -906,14 +1044,29 @@ def create_container_entry(
     if entered_dt > datetime.now():
         raise HTTPException(status_code=400, detail="Giriş zamanı gelecekte bir zaman olamaz.")
 
+    # Çıkış zamanı girilmişse kayıt COMPLETE (kapalı), girilmemişse IN_PROGRESS
+    # (hâlâ sahada) olarak işaretlenir.
+    minutes = None
+    status = "IN_PROGRESS"
+    if time_exited_yard:
+        try:
+            exited_dt = datetime.fromisoformat(time_exited_yard)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Çıkış zamanı formatı geçersiz.")
+        if exited_dt <= entered_dt:
+            raise HTTPException(status_code=400, detail="Çıkış zamanı, giriş zamanından sonra olmalı.")
+        minutes = round((exited_dt - entered_dt).total_seconds() / 60, 1)
+        status = "COMPLETE"
+    else:
+        time_exited_yard = None
+
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Bu konteynerin COMPLETE durumundaki tüm geçmiş kayıtlarına bak: herhangi
-    # birinde çıkış (time_exited_yard) girilmemişse, konteyner hâlâ sahada
-    # demektir — yeni bir giriş kaydı oluşturulmasına izin verilmez.
+    # Bu konteynerin IN_PROGRESS durumundaki (hâlâ sahada, çıkışı yapılmamış)
+    # kayıtlarına bak — varsa yeni bir giriş kaydı oluşturulmasına izin verilmez.
     cursor.execute(
-        "SELECT COUNT(*) as cnt FROM gate_transactions WHERE container_no = ? AND transaction_status = 'COMPLETE' AND time_exited_yard IS NULL",
+        "SELECT COUNT(*) as cnt FROM gate_transactions WHERE container_no = ? AND transaction_status = 'IN_PROGRESS'",
         (container_no,),
     )
     open_count = cursor.fetchone()["cnt"]
@@ -928,10 +1081,10 @@ def create_container_entry(
         """
         INSERT INTO gate_transactions
             (container_no, time_entered_yard, time_exited_yard, transaction_status,
-             loc_name, truck_visit_minutes_in_yard, transaction_type, damage, freight_kind)
-        VALUES (?, ?, NULL, 'COMPLETE', ?, NULL, ?, ?, ?)
+             loc_name, truck_visit_minutes_in_yard, transaction_type, damage, freight_kind, facility_id, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'admin')
         """,
-        (container_no, time_entered_yard, loc_name, transaction_type, int(bool(damage)), freight_kind),
+        (container_no, time_entered_yard, time_exited_yard, status, loc_name, minutes, transaction_type, int(bool(damage)), freight_kind, facility_id),
     )
     new_id = cursor.lastrowid
     conn.commit()
@@ -948,19 +1101,30 @@ def get_gate_record_by_id(record_id: int):
     return dict(row) if row else None
 
 
-def search_container_records(container_no: str):
+def search_container_records(container_no: str, facility_id: Optional[str] = None):
     container_no = container_no.strip().upper()
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        f"""
-        SELECT {_ADMIN_COLUMNS}
-        FROM gate_transactions
-        WHERE container_no = ?
-        ORDER BY time_entered_yard DESC
-        """,
-        (container_no,),
-    )
+    if facility_id:
+        cursor.execute(
+            f"""
+            SELECT {_ADMIN_COLUMNS}
+            FROM gate_transactions
+            WHERE container_no = ? AND facility_id = ?
+            ORDER BY time_entered_yard DESC
+            """,
+            (container_no, facility_id),
+        )
+    else:
+        cursor.execute(
+            f"""
+            SELECT {_ADMIN_COLUMNS}
+            FROM gate_transactions
+            WHERE container_no = ?
+            ORDER BY time_entered_yard DESC
+            """,
+            (container_no,),
+        )
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -970,7 +1134,7 @@ def close_container_exit(record_id: int, time_exited_yard: str):
     record = get_gate_record_by_id(record_id)
     if not record:
         raise HTTPException(status_code=404, detail="Kayıt bulunamadı.")
-    if record["transaction_status"] != "COMPLETE" or record["time_exited_yard"] is not None:
+    if record["transaction_status"] != "IN_PROGRESS" or record["time_exited_yard"] is not None:
         raise HTTPException(status_code=400, detail="Bu kayıt zaten kapalı ya da iptal edilmiş, çıkış eklenemez.")
 
     entered = datetime.fromisoformat(record["time_entered_yard"])
@@ -983,7 +1147,7 @@ def close_container_exit(record_id: int, time_exited_yard: str):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE gate_transactions SET time_exited_yard = ?, truck_visit_minutes_in_yard = ? WHERE id = ?",
+        "UPDATE gate_transactions SET time_exited_yard = ?, truck_visit_minutes_in_yard = ?, transaction_status = 'COMPLETE' WHERE id = ?",
         (time_exited_yard, minutes, record_id),
     )
     conn.commit()
@@ -1067,6 +1231,7 @@ class ChatRequest(BaseModel):
     history: Optional[List[ChatMessage]] = None
     session_id: Optional[int] = None
     language: Optional[str] = "tr"
+    facility_id: Optional[str] = None
 
 
 @app.post("/api/chat")
@@ -1085,7 +1250,7 @@ def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
         messages.append({"role": "user", "content": request.message})
 
         response = client.chat.completions.create(
-            model="gpt-oss-120b",
+            model=GROQ_MODEL,
             messages=messages,
             tools=TOOLS,
         )
@@ -1100,7 +1265,7 @@ def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
                 function_name = tool_call.function.name
                 function_args = json.loads(tool_call.function.arguments)
                 function_to_call = AVAILABLE_FUNCTIONS[function_name]
-                function_result = function_to_call(**function_args)
+                function_result = function_to_call(**function_args, facility_id=request.facility_id)
 
                 messages.append({
                     "role": "tool",
@@ -1110,17 +1275,17 @@ def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
                 
 
             second_response = client.chat.completions.create(
-                model="gpt-oss-120b",
+                model=GROQ_MODEL,
                 messages=messages,
             )
             reply_text = second_response.choices[0].message.content or ""
             assistant_messages = (request.history or []) + [ChatMessage(role="user", content=request.message), ChatMessage(role="assistant", content=reply_text)]
-            saved_session = save_chat_session(chat_user["id"], chat_user["username"], [{"role": msg.role, "content": msg.content} for msg in assistant_messages], request.session_id)
+            saved_session = save_chat_session(chat_user["id"], chat_user["username"], [{"role": msg.role, "content": msg.content} for msg in assistant_messages], request.session_id, facility_id=request.facility_id)
             return {"reply": reply_text, "session": saved_session}
 
         reply_text = response_message.content or ""
         assistant_messages = (request.history or []) + [ChatMessage(role="user", content=request.message), ChatMessage(role="assistant", content=reply_text)]
-        saved_session = save_chat_session(chat_user["id"], chat_user["username"], [{"role": msg.role, "content": msg.content} for msg in assistant_messages], request.session_id)
+        saved_session = save_chat_session(chat_user["id"], chat_user["username"], [{"role": msg.role, "content": msg.content} for msg in assistant_messages], request.session_id, facility_id=request.facility_id)
         return {"reply": reply_text, "session": saved_session}
 
     except HTTPException:

@@ -1,7 +1,8 @@
 <script setup>
-import { ref, nextTick, onMounted, computed } from 'vue'
+import { ref, nextTick, onMounted, watch, computed } from 'vue'
 import axios from 'axios'
 import { language, t } from '../i18n'
+import { selectedFacility, availableFacilities, loadFacilities, facilityLabel, facilityLocked } from '../facility'
 import AdminPanel from './AdminPanel.vue'
 
 const props = defineProps({
@@ -40,6 +41,7 @@ function normalizeSession(session) {
     created_at: session.created_at,
     updated_at: session.updated_at,
     date: formatSessionDate(session.updated_at || session.created_at),
+    facility_id: session.facility_id || null,
   }
 }
 
@@ -68,6 +70,7 @@ async function loadSessions() {
 
 onMounted(() => {
   loadSessions()
+  loadFacilities()
 })
 
 function scrollToBottom() {
@@ -112,6 +115,7 @@ async function sendMessage() {
         history: messages.value.slice(0, -1),
         session_id: activeSessionId.value,
         language: language.value,
+        facility_id: selectedFacility.value,
       },
       { headers }
     )
@@ -147,6 +151,7 @@ function startNewChat() {
 function loadSession(session) {
   messages.value = [...session.messages]
   activeSessionId.value = session.id
+  if (session.facility_id) selectedFacility.value = session.facility_id
   showHistory.value = false
   scrollToBottom()
 }
@@ -208,6 +213,12 @@ async function deleteSession(id, event) {
 }
 
 const hasActiveChat = computed(() => messages.value.length > 0)
+
+// Sohbette en az bir mesaj varken liman kilitlenir — bu bilgi haritayla da
+// paylaşılıyor (facility.js), çünkü haritadan tıklayarak da değiştirilebiliyordu.
+watch(hasActiveChat, (locked) => {
+  facilityLocked.value = locked
+}, { immediate: true })
 </script>
 
 <template>
@@ -265,7 +276,10 @@ const hasActiveChat = computed(() => messages.value.length > 0)
             @keydown.esc="cancelEditTitle($event)"
           />
           <div v-else class="history-title">{{ session.title }}</div>
-          <div class="history-date">{{ session.date }}</div>
+          <div class="history-meta">
+            <span class="history-date">{{ session.date }}</span>
+            <span v-if="session.facility_id" class="history-facility">{{ facilityLabel(session.facility_id) }}</span>
+          </div>
         </div>
         <div class="history-item-actions">
           <template v-if="editingSessionId === session.id">
@@ -280,8 +294,24 @@ const hasActiveChat = computed(() => messages.value.length > 0)
       </div>
     </div>
 
+    <!-- Liman seçilmemişse: sohbete başlamadan önce seçim iste -->
+    <div v-else-if="!selectedFacility" class="facility-gate">
+      <p>{{ t('chatSelectFacilityPrompt') }}</p>
+      <select v-model="selectedFacility" class="facility-select">
+        <option value="" disabled selected>{{ t('chatSelectFacilityPlaceholder') }}</option>
+        <option v-for="fac in availableFacilities" :key="fac" :value="fac">{{ facilityLabel(fac) }}</option>
+      </select>
+    </div>
+
     <!-- Mesaj alanı -->
     <main v-else class="chat-area" ref="messagesContainer">
+      <div class="facility-banner">
+        <span>{{ t('chatFacilityInfo') }} <strong>{{ facilityLabel(selectedFacility) }}</strong></span>
+        <select v-if="messages.length === 0" v-model="selectedFacility" class="facility-select-inline">
+          <option v-for="fac in availableFacilities" :key="fac" :value="fac">{{ facilityLabel(fac) }}</option>
+        </select>
+      </div>
+
       <div v-if="messages.length === 0" class="empty-state">
         <p>{{ t('chatEmptyState') }}</p>
       </div>
@@ -306,7 +336,7 @@ const hasActiveChat = computed(() => messages.value.length > 0)
       </div>
     </main>
 
-    <footer v-if="!showHistory && !showAdminPanel" class="input-area">
+    <footer v-if="!showHistory && !showAdminPanel && selectedFacility" class="input-area">
       <textarea
         v-model="userInput"
         :placeholder="t('chatInputPlaceholder')"
@@ -445,6 +475,55 @@ const hasActiveChat = computed(() => messages.value.length > 0)
   padding: 0.75rem;
 }
 
+.facility-gate {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 1.5rem;
+  text-align: center;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+}
+
+.facility-select,
+.facility-select-inline {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  color: white;
+  font-size: 0.85rem;
+  padding: 0.45rem 0.6rem;
+  outline: none;
+}
+
+.facility-select option,
+.facility-select-inline option {
+  color: #0c4a6e;
+}
+
+.facility-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  padding: 0.5rem 0.65rem;
+  color: #e2e8f0;
+  font-size: 0.8rem;
+  margin-bottom: 0.5rem;
+}
+
+.facility-select-inline {
+  padding: 0.3rem 0.4rem;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+
 .history-empty {
   text-align: center;
   color: #64748b;
@@ -474,8 +553,23 @@ const hasActiveChat = computed(() => messages.value.length > 0)
       color: white;
 }
 
+.history-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
 .history-date {
     color: rgba(255, 255, 255, 0.6);
+}
+
+.history-facility {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.72rem;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
 }
 
 .title-input {
