@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 import re
+import inspect
 from datetime import datetime
 from pathlib import Path
 import jwt
@@ -171,6 +172,25 @@ def ensure_chat_history_tables():
         CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id_updated_at
         ON chat_sessions(user_id, updated_at DESC)
     """)
+
+    # Dashboard: giriş yapmış kullanıcıların son işlemlerini (kart olarak
+    # gösterilecek) tutan tablo. Konteyner numarası gibi hassas/detay bilgi
+    # tutulmaz — sadece aksiyon tipi ve hangi limanla ilgili olduğu.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_activity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            action_type TEXT NOT NULL,
+            facility_id TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_user_activity_user_id_created_at
+        ON user_activity(user_id, created_at DESC)
+    """)
+
     conn.commit()
     conn.close()
 
@@ -225,6 +245,47 @@ def resolve_chat_user(current_user: dict):
         raise HTTPException(status_code=401, detail="Kullanıcı doğrulanamadı.")
 
     return {"id": user_id, "username": username}
+
+
+# Dashboard: girişli kullanıcının "son işlemleri" kartlarında gösterilen
+# aksiyon tipleri. Konteyner numarası gibi bir detay burada tutulmaz.
+VALID_ACTION_TYPES = {"chatbot_query", "facility_viewed", "admin_record_added"}
+
+
+def log_activity(user_id: int, action_type: str, facility_id: Optional[str] = None):
+    """Bir kullanıcı aksiyonunu dashboard'daki 'son işlemler' kartları için kaydeder.
+    Bilinmeyen bir action_type sessizce yok sayılır (loglama asla ana işlemi bozmamalı)."""
+    if action_type not in VALID_ACTION_TYPES:
+        return
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO user_activity (user_id, action_type, facility_id) VALUES (?, ?, ?)",
+            (user_id, action_type, facility_id),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def list_recent_activity(user_id: int, limit: int = 5):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT action_type, facility_id, created_at
+        FROM user_activity
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        (user_id, limit),
+    )
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
 
 
 _CHAT_TITLE_STOPWORDS = {
@@ -495,8 +556,46 @@ def api_get_countries():
 
 
 @app.get('/api/facilities')
-def api_list_facilities(current_user: dict = Depends(get_current_user)):
+def api_list_facilities():
+    # Misafirler de dashboard'daki liman seçicisini kullanabilsin diye
+    # kimlik doğrulama gerektirmez — sadece liman kodlarını (GBZ, YCT...) döner.
     return {'facilities': list_known_facilities()}
+
+
+class LogActivityRequest(BaseModel):
+    action_type: str
+    facility_id: Optional[str] = None
+
+
+@app.post('/api/activity')
+def api_log_activity(request: LogActivityRequest, current_user: dict = Depends(get_current_user)):
+    chat_user = resolve_chat_user(current_user)
+    if request.action_type not in VALID_ACTION_TYPES:
+        raise HTTPException(status_code=400, detail="Geçersiz aksiyon tipi.")
+    log_activity(chat_user["id"], request.action_type, request.facility_id)
+    return {"status": "ok"}
+
+
+@app.get('/api/activity')
+def api_list_activity(current_user: dict = Depends(get_current_user)):
+    chat_user = resolve_chat_user(current_user)
+    return {"activities": list_recent_activity(chat_user["id"])}
+
+
+@app.get('/api/dashboard/analytics')
+def api_dashboard_analytics(facility_id: Optional[str] = None, period: str = "week"):
+    # Yoğunluk grafikleri herkes (misafir dahil) tarafından görülebilir,
+    # kimlik doğrulama gerektirmez.
+    if period not in ("week", "month"):
+        period = "week"
+    return {
+        "busy_hours": get_busy_hours(facility_id),
+        "weekday_density": get_weekday_density(facility_id),
+        "monthly_density": get_monthly_density(facility_id),
+        "dwell_time_stats": get_dwell_time_stats(facility_id),
+        "status_with_trend": get_status_with_trend(facility_id),
+        "period_comparison": compare_recent_periods(facility_id, period),
+    }
 
 
 # ---------------------------------------------------------
@@ -557,6 +656,8 @@ def api_create_container_entry(request: NewContainerEntryRequest, current_admin:
         loc_name=request.loc_name,
         damage=request.damage,
     )
+    admin_user = resolve_chat_user(current_admin)
+    log_activity(admin_user["id"], "admin_record_added", request.facility_id)
     return {"record": record}
 
 
@@ -796,7 +897,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_containers_by_date_range",
-            "description": "Belirli bir tarih aralığındaki tüm giriş/çıkış hareketlerini getirir. Her kayıtta sahadaki konum (loc_name), sahada geçirilen süre (truck_visit_minutes_in_yard), işlem tipi (transaction_type), hasar durumu (damage) ve yük tipi (freight_kind) de bulunur.",
+            "description": "Belirli bir tarih aralığındaki giriş/çıkış hareketlerini getirir. Sonuç {total_count, records, note} şeklindedir: total_count GERÇEK toplam sayıdır (kaç tane olduğu sorulursa bunu kullan), records ise en fazla 25 örnek kayıt içerir (her kayıtta loc_name, truck_visit_minutes_in_yard, transaction_type, damage, freight_kind de bulunur).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -811,7 +912,61 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "list_containers_in_yard",
-            "description": "Şu anda limanda olan tüm konteynerleri listeler. Her kayıtta sahadaki konum (loc_name), sahada geçirilen süre (truck_visit_minutes_in_yard), işlem tipi (transaction_type), hasar durumu (damage) ve yük tipi (freight_kind) de bulunur.",
+            "description": "Şu anda limanda olan konteynerleri listeler. Sonuç {total_count, records, note} şeklindedir: total_count GERÇEK toplam sayıdır ('kaç konteyner var' gibi sorularda bunu kullan), records ise en son 25 kaydı içerir (her kayıtta loc_name, truck_visit_minutes_in_yard, transaction_type, damage, freight_kind de bulunur).",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_busy_hours",
+            "description": "Limandaki saat bazlı giriş yoğunluğunu/trafiğini hesaplar. Hangi saatlerde en çok konteyner girişi olduğu, en yoğun saatten en az yoğuna sıralı şekilde döner (saat: 0-23, entry_count: o saatteki toplam giriş sayısı). 'Hangi saatler yoğun', 'en yoğun saat kaç', 'trafik ne zaman az' gibi sorularda kullanılır.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weekday_density",
+            "description": "Haftanın hangi gününde (Pazartesi-Pazar) en çok giriş olduğunu hesaplar, en yoğun günden en az yoğuna sıralı döner. 'Hangi gün daha yoğun', 'haftanın en yoğun günü' gibi sorularda kullanılır.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_monthly_density",
+            "description": "Hangi ayda/mevsimde en çok giriş olduğunu hesaplar, en yoğundan en az yoğuna sıralı döner. 'Hangi ay yoğun', 'mevsimsel yoğunluk nasıl' gibi sorularda kullanılır.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "compare_recent_periods",
+            "description": "Son dönemi (hafta: son 7 gün, ay: son 30 gün) bir önceki aynı uzunluktaki döneme kıyaslar, değişim yüzdesini (change_percent) döner. 'Bu hafta geçen haftaya göre nasıl?', 'bu ay geçen aya göre?' gibi karşılaştırma sorularında kullanılır.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "period": {"type": "string", "enum": ["week", "month"], "description": "Karşılaştırma dönemi: 'week' (son 7 gün) veya 'month' (son 30 gün)"}
+                },
+                "required": ["period"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_dwell_time_stats",
+            "description": "Konteynerlerin limanda/sahada ortalama, en kısa ve en uzun kalış süresini (dakika cinsinden) hesaplar. 'Ortalama kalış süresi ne kadar', 'konteynerler ne kadar kalıyor' gibi sorularda kullanılır.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_status_with_trend",
+            "description": "Şu anki liman doluluğunu (sahada kaç konteyner var) ve bugünkü giriş sayısının geçmiş günlük ortalamaya göre nasıl olduğunu birlikte döner. 'Şu an durum nasıl', 'normalden yoğun muyuz' gibi sorularda kullanılır.",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -893,8 +1048,16 @@ def get_container_status(container_no: str, facility_id: Optional[str] = None):
     return {"status": status, "record": record}
 
 
+# LLM'e (özellikle Groq'un dakikalık token limitine) gönderilen tool
+# sonuçlarının çok büyümesini önlemek için liste döndüren fonksiyonlar tüm
+# kayıtları değil, gerçek toplam sayı + sınırlı sayıda örnek kayıt döner.
+_MAX_SAMPLE_RECORDS = 25
+
+
 def get_containers_by_date_range(start_date: str, end_date: str, facility_id: Optional[str] = None):
-    """Belirli bir tarih aralığında giriş yapan konteynerleri döner (iptal edilmiş kayıtlar hariç)."""
+    """Belirli bir tarih aralığında giriş yapan konteynerleri döner (iptal edilmiş kayıtlar hariç).
+    'total_count' gerçek toplam sayıdır; 'records' en fazla ilk 25 kaydı içerir
+    (çok büyük sonuçlarda LLM'e aşırı veri gitmesin diye)."""
     conn = get_connection()
     cursor = conn.cursor()
     facility_clause = " AND facility_id = ?" if facility_id else ""
@@ -908,10 +1071,20 @@ def get_containers_by_date_range(start_date: str, end_date: str, facility_id: Op
     """, params)
     rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    all_records = [dict(row) for row in rows]
+    return {
+        "total_count": len(all_records),
+        "records": all_records[:_MAX_SAMPLE_RECORDS],
+        "note": (
+            f"Sadece ilk {_MAX_SAMPLE_RECORDS} kayıt gösteriliyor; gerçek toplam sayı total_count alanındadır."
+            if len(all_records) > _MAX_SAMPLE_RECORDS else None
+        ),
+    }
 
 def list_containers_in_yard(facility_id: Optional[str] = None):
-    """Şu anda limanda/sahada olan konteynerleri listeler (iptal edilmiş kayıtlar hariç)."""
+    """Şu anda limanda/sahada olan konteynerleri listeler (iptal edilmiş kayıtlar hariç).
+    'total_count' gerçek toplam sayıdır; 'records' en fazla ilk 25 kaydı içerir
+    (çok büyük sonuçlarda LLM'e aşırı veri gitmesin diye)."""
     conn = get_connection()
     cursor = conn.cursor()
     facility_clause = " AND facility_id = ?" if facility_id else ""
@@ -924,7 +1097,194 @@ def list_containers_in_yard(facility_id: Optional[str] = None):
     """, params)
     rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    all_records = [dict(row) for row in rows]
+    return {
+        "total_count": len(all_records),
+        "records": all_records[:_MAX_SAMPLE_RECORDS],
+        "note": (
+            f"Sadece en son {_MAX_SAMPLE_RECORDS} kayıt gösteriliyor; gerçek toplam sayı total_count alanındadır."
+            if len(all_records) > _MAX_SAMPLE_RECORDS else None
+        ),
+    }
+
+
+def get_busy_hours(facility_id: Optional[str] = None):
+    """Saat bazında (0-23) giriş yoğunluğunu hesaplar; en yoğun saatten en
+    az yoğuna sıralı döner. Hangi saatlerde en çok konteyner girişi olduğunu
+    (yoğunluk/trafik) belirlemek için kullanılır."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    facility_clause = " AND facility_id = ?" if facility_id else ""
+    params = (facility_id,) if facility_id else ()
+    cursor.execute(f"""
+        SELECT CAST(strftime('%H', time_entered_yard) AS INTEGER) as hour, COUNT(*) as entry_count
+        FROM gate_transactions
+        WHERE transaction_status != 'CANCEL' AND time_entered_yard IS NOT NULL{facility_clause}
+        GROUP BY hour
+        ORDER BY entry_count DESC
+    """, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"hour": row["hour"], "entry_count": row["entry_count"]} for row in rows]
+
+
+_WEEKDAY_NAMES_TR = ["Pazar", "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi"]
+
+
+def get_weekday_density(facility_id: Optional[str] = None):
+    """Haftanın hangi gününde en çok giriş olduğunu hesaplar; en yoğun
+    günden en az yoğuna sıralı döner."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    facility_clause = " AND facility_id = ?" if facility_id else ""
+    params = (facility_id,) if facility_id else ()
+    cursor.execute(f"""
+        SELECT CAST(strftime('%w', time_entered_yard) AS INTEGER) as weekday, COUNT(*) as entry_count
+        FROM gate_transactions
+        WHERE transaction_status != 'CANCEL' AND time_entered_yard IS NOT NULL{facility_clause}
+        GROUP BY weekday
+        ORDER BY entry_count DESC
+    """, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"weekday": _WEEKDAY_NAMES_TR[row["weekday"]], "entry_count": row["entry_count"]} for row in rows]
+
+
+_MONTH_NAMES_TR = [
+    "", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+    "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",
+]
+_SEASON_BY_MONTH_TR = {
+    12: "Kış", 1: "Kış", 2: "Kış",
+    3: "İlkbahar", 4: "İlkbahar", 5: "İlkbahar",
+    6: "Yaz", 7: "Yaz", 8: "Yaz",
+    9: "Sonbahar", 10: "Sonbahar", 11: "Sonbahar",
+}
+
+
+def get_monthly_density(facility_id: Optional[str] = None):
+    """Hangi ayda/mevsimde en çok giriş olduğunu hesaplar; en yoğundan en
+    az yoğuna sıralı döner."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    facility_clause = " AND facility_id = ?" if facility_id else ""
+    params = (facility_id,) if facility_id else ()
+    cursor.execute(f"""
+        SELECT CAST(strftime('%m', time_entered_yard) AS INTEGER) as month, COUNT(*) as entry_count
+        FROM gate_transactions
+        WHERE transaction_status != 'CANCEL' AND time_entered_yard IS NOT NULL{facility_clause}
+        GROUP BY month
+        ORDER BY entry_count DESC
+    """, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "month": _MONTH_NAMES_TR[row["month"]],
+            "season": _SEASON_BY_MONTH_TR[row["month"]],
+            "entry_count": row["entry_count"],
+        }
+        for row in rows
+    ]
+
+
+def compare_recent_periods(facility_id: Optional[str] = None, period: str = "week"):
+    """Son dönemi (hafta: son 7 gün, ay: son 30 gün) bir önceki aynı uzunluktaki
+    döneme kıyaslar. 'Bu hafta geçen haftaya göre nasıl?' gibi sorularda kullanılır.
+    Karşılaştırılacak önceki dönemde hiç veri yoksa change_percent None döner."""
+    days = 30 if period == "month" else 7
+    conn = get_connection()
+    cursor = conn.cursor()
+    facility_clause = " AND facility_id = ?" if facility_id else ""
+
+    def count_between(start_offset_days, end_offset_days):
+        params = [f"-{start_offset_days} days", f"-{end_offset_days} days"]
+        if facility_id:
+            params.append(facility_id)
+        cursor.execute(f"""
+            SELECT COUNT(*) as cnt FROM gate_transactions
+            WHERE transaction_status != 'CANCEL'
+              AND date(time_entered_yard) > date('now', ?)
+              AND date(time_entered_yard) <= date('now', ?){facility_clause}
+        """, params)
+        return cursor.fetchone()["cnt"]
+
+    current_count = count_between(days, 0)
+    previous_count = count_between(days * 2, days)
+    conn.close()
+
+    change_percent = None
+    if previous_count > 0:
+        change_percent = round((current_count - previous_count) / previous_count * 100, 1)
+
+    return {
+        "period": period,
+        "current_period_count": current_count,
+        "previous_period_count": previous_count,
+        "change_percent": change_percent,
+    }
+
+
+def get_dwell_time_stats(facility_id: Optional[str] = None):
+    """Konteynerlerin sahada ortalama/en kısa/en uzun kalış süresini (dakika
+    cinsinden) hesaplar. 'Ortalama kalış süresi ne kadar' gibi sorularda kullanılır."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    facility_clause = " AND facility_id = ?" if facility_id else ""
+    params = (facility_id,) if facility_id else ()
+    cursor.execute(f"""
+        SELECT AVG(truck_visit_minutes_in_yard) as avg_minutes,
+               MIN(truck_visit_minutes_in_yard) as min_minutes,
+               MAX(truck_visit_minutes_in_yard) as max_minutes,
+               COUNT(*) as sample_size
+        FROM gate_transactions
+        WHERE transaction_status != 'CANCEL' AND truck_visit_minutes_in_yard IS NOT NULL{facility_clause}
+    """, params)
+    row = cursor.fetchone()
+    conn.close()
+    return {
+        "avg_minutes": round(row["avg_minutes"], 1) if row["avg_minutes"] is not None else None,
+        "min_minutes": row["min_minutes"],
+        "max_minutes": row["max_minutes"],
+        "sample_size": row["sample_size"],
+    }
+
+
+def get_status_with_trend(facility_id: Optional[str] = None):
+    """Şu anki liman doluluğunu (sahada kaç konteyner var) ve bugünkü giriş
+    sayısının geçmiş günlük ortalamaya göre nasıl olduğunu birlikte döner.
+    'Şu an durum nasıl, normalden yoğun mu' gibi sorularda kullanılır."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    facility_clause = " AND facility_id = ?" if facility_id else ""
+    params = (facility_id,) if facility_id else ()
+
+    cursor.execute(f"""
+        SELECT COUNT(*) as cnt FROM gate_transactions
+        WHERE time_exited_yard IS NULL AND transaction_status != 'CANCEL'{facility_clause}
+    """, params)
+    current_in_yard = cursor.fetchone()["cnt"]
+
+    cursor.execute(f"""
+        SELECT COUNT(*) as cnt FROM gate_transactions
+        WHERE transaction_status != 'CANCEL' AND date(time_entered_yard) = date('now'){facility_clause}
+    """, params)
+    today_entries = cursor.fetchone()["cnt"]
+
+    cursor.execute(f"""
+        SELECT COUNT(*) * 1.0 / COUNT(DISTINCT date(time_entered_yard)) as avg_per_day
+        FROM gate_transactions
+        WHERE transaction_status != 'CANCEL' AND time_entered_yard IS NOT NULL{facility_clause}
+    """, params)
+    avg_row = cursor.fetchone()
+    avg_per_day = round(avg_row["avg_per_day"], 1) if avg_row["avg_per_day"] is not None else None
+
+    conn.close()
+    return {
+        "current_in_yard": current_in_yard,
+        "today_entry_count": today_entries,
+        "historical_avg_entries_per_day": avg_per_day,
+    }
 
 
 # ---------------------------------------------------------
@@ -1218,6 +1578,12 @@ AVAILABLE_FUNCTIONS = {
     "get_container_status": get_container_status,
     "get_containers_by_date_range": get_containers_by_date_range,
     "list_containers_in_yard": list_containers_in_yard,
+    "get_busy_hours": get_busy_hours,
+    "get_weekday_density": get_weekday_density,
+    "get_monthly_density": get_monthly_density,
+    "compare_recent_periods": compare_recent_periods,
+    "get_dwell_time_stats": get_dwell_time_stats,
+    "get_status_with_trend": get_status_with_trend,
 }
 
 
@@ -1265,6 +1631,11 @@ def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
                 function_name = tool_call.function.name
                 function_args = json.loads(tool_call.function.arguments)
                 function_to_call = AVAILABLE_FUNCTIONS[function_name]
+                # LLM bazen fonksiyonun kabul etmediği bir argüman uydurabiliyor
+                # (örn. tool şemaları birbirine karışınca); bunları sessizce at,
+                # çökmek yerine sadece geçerli parametrelerle çağır.
+                valid_params = set(inspect.signature(function_to_call).parameters)
+                function_args = {k: v for k, v in function_args.items() if k in valid_params}
                 function_result = function_to_call(**function_args, facility_id=request.facility_id)
 
                 messages.append({
@@ -1281,11 +1652,13 @@ def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
             reply_text = second_response.choices[0].message.content or ""
             assistant_messages = (request.history or []) + [ChatMessage(role="user", content=request.message), ChatMessage(role="assistant", content=reply_text)]
             saved_session = save_chat_session(chat_user["id"], chat_user["username"], [{"role": msg.role, "content": msg.content} for msg in assistant_messages], request.session_id, facility_id=request.facility_id)
+            log_activity(chat_user["id"], "chatbot_query", request.facility_id)
             return {"reply": reply_text, "session": saved_session}
 
         reply_text = response_message.content or ""
         assistant_messages = (request.history or []) + [ChatMessage(role="user", content=request.message), ChatMessage(role="assistant", content=reply_text)]
         saved_session = save_chat_session(chat_user["id"], chat_user["username"], [{"role": msg.role, "content": msg.content} for msg in assistant_messages], request.session_id, facility_id=request.facility_id)
+        log_activity(chat_user["id"], "chatbot_query", request.facility_id)
         return {"reply": reply_text, "session": saved_session}
 
     except HTTPException:

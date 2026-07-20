@@ -1,14 +1,38 @@
 <script setup>
-import { onMounted, ref, reactive } from 'vue'
+import { onMounted, ref, reactive, watch } from 'vue'
 import axios from 'axios'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { t, countryName } from '../i18n'
-import { selectedFacility, facilityLocked } from '../facility'
+import { selectedFacility, facilityLocked, requestTab, availableFacilities, loadFacilities, facilityLabel } from '../facility'
+
+const props = defineProps({
+  // Harita artık her zaman tam ekran değil, "Harita" sekmesi seçiliyken
+  // görünür oluyor (v-show). Sekme aktif olduğunda Leaflet'in boyutunu
+  // yeniden hesaplaması gerekiyor, çünkü gizliyken (display:none) container
+  // boyutu 0 olarak ölçülmüş olabilir.
+  isActive: { type: Boolean, default: true },
+})
+
+// Chatbot sadece girişli kullanıcılar için aktif; misafirken "artık chatbotta
+// sorabilirsiniz" mesajı yanıltıcı olur, o yüzden gösterilmez.
+const isLoggedIn = !!localStorage.getItem('corex_token')
 
 // Haritadaki liman adından gerçek facility_id'ye eşleme. Şimdilik sadece
 // gerçek konteyner verisi olan Gebze (GBZ), Körfez (YCT) ve Ankara (ANK) tıklanabilir.
-const PORT_NAME_TO_FACILITY = { Gebze: 'GBZ', Körfez: 'YCT', Ankara: 'ANK' }
+const PORT_NAME_TO_FACILITY = {
+  Gebze: 'GBZ', Körfez: 'YCT', Ankara: 'ANK',
+  Marsaxlokk: 'MXK', Takoradi: 'TKD', Taranto: 'TAR',
+}
+
+// Ters eşleme: facility_id -> harita liman adı (dropdown'dan ülkeye odaklanmak için)
+const FACILITY_TO_PORT_NAME = Object.fromEntries(
+  Object.entries(PORT_NAME_TO_FACILITY).map(([name, code]) => [code, name])
+)
+
+// Ülkenin Türkçe adından o ülkenin Leaflet katmanına — dropdown'dan seçilen
+// limanın ülkesini programatik olarak "tıklamak" (odaklamak) için kullanılır.
+let countryLayerByTrName = {}
 
 const lockedNotice = ref(false)
 
@@ -21,6 +45,19 @@ function selectFacility(code) {
     return
   }
   selectedFacility.value = code
+}
+
+// Dropdown'dan bir liman seçildiğinde: haritayı o ülkeye odaklar (tıklamayla
+// aynı davranış — detay paneli, zoom, hava durumu) ve limanı seçili yapar.
+function focusOnFacility(code) {
+  if (!code) return
+  const portName = FACILITY_TO_PORT_NAME[code]
+  const countryEntry = countries.value.find(c => c.name === portName)
+  if (countryEntry) {
+    const layer = countryLayerByTrName[countryEntry.country]
+    if (layer) layer.fire('click')
+  }
+  selectFacility(code)
 }
 
 const mapContainer = ref(null)
@@ -193,32 +230,60 @@ function closeDetails() {
   if (_closeDetailsImpl.value) _closeDetailsImpl.value()
 }
 
+const MAP_CENTER = [25, 10]
+const MAP_ZOOM = 2
+
 onMounted(async () => {
   console.log('OceanMap: harita başlatılıyor...')
+  loadFacilities()
 
   const map = L.map(mapContainer.value, {
-    center: [25, 10],
-    zoom: 2,
+    center: MAP_CENTER,
+    zoom: MAP_ZOOM,
     minZoom: 2,
     maxZoom: 5,
     worldCopyJump: true,
     zoomControl: false,
-    // Dikeyde dünyanın dışına (kutupların ötesine) sonsuz kaydırılmasını engeller.
-    // Yatayda geniş bırakıldı ki worldCopyJump'ın döngüsel kaydırması bozulmasın.
-    maxBounds: [[-85, -1000], [85, 1000]],
-    maxBoundsViscosity: 1.0,
+    // maxBounds, worldCopyJump ile birlikte kullanılınca Leaflet'te bilinen bir
+    // çakışmaya yol açıyor (bir yöne kayınca ters yöne dönememe gibi). Bu yüzden
+    // maxBounds hiç kullanılmıyor; dikey sınır aşağıda 'moveend' olayıyla elle
+    // uygulanıyor (worldCopyJump'ın yatay mantığına hiç dokunmadan).
   })
 
   L.control.zoom({ position: 'bottomleft' }).addTo(map)
 
+  // Dikeyde kutupların ötesine sonsuz kaydırılmasını engeller — maxBounds
+  // yerine elle: enlem sınırı aşılırsa sadece enlemi geri çeker, boylama
+  // (worldCopyJump'ın yönettiği eksene) dokunmaz.
+  const MAX_LAT = 82
+  map.on('moveend', () => {
+    const center = map.getCenter()
+    if (center.lat > MAX_LAT || center.lat < -MAX_LAT) {
+      const clampedLat = Math.max(-MAX_LAT, Math.min(MAX_LAT, center.lat))
+      map.panTo([clampedLat, center.lng], { animate: false })
+    }
+  })
+
     // We use a plain white canvas and draw country vector fills via GeoJSON
     // (no raster tile layer) so the background is neutral and matches design.
 
-  // Konteyner boyutu geç hesaplanmış olabilir, garanti için yeniden ölç
-  setTimeout(() => {
-    map.invalidateSize()
-    console.log('OceanMap: invalidateSize çağrıldı')
-  }, 200)
+  // Harita "Harita" sekmesi henüz seçili değilken (gizli/display:none)
+  // mount olabiliyor; o an container boyutu 0 ölçüldüğü için Leaflet'in
+  // merkez hesabı bozuluyor. Sadece invalidateSize yetmiyor, container GERÇEKTEN
+  // görünür olduğu ilk anda merkezi de elle geri vermek gerekiyor — ama SADECE
+  // ilk seferde, yoksa kullanıcının sonradan yaptığı zoom/pan her sekme
+  // değişiminde sıfırlanır.
+  let hasFixedInitialView = false
+  watch(() => props.isActive, (active) => {
+    if (!active) return
+    setTimeout(() => {
+      map.invalidateSize()
+      if (!hasFixedInitialView) {
+        map.setView(MAP_CENTER, MAP_ZOOM)
+        hasFixedInitialView = true
+      }
+    }, 50)
+  }, { immediate: true })
 
   await loadCountries()
 
@@ -272,6 +337,11 @@ onMounted(async () => {
       style: defaultStyle,
       onEachFeature(feature, layer) {
         const name = feature.properties.ADMIN || feature.properties.NAME || feature.properties.name
+
+        // Dropdown'dan liman seçilince o ülkenin katmanına programatik
+        // erişebilmek için Türkçe ad -> katman eşlemesini kaydet.
+        const trNameForLookup = getTurkishNameForFeature(feature) || name
+        countryLayerByTrName[trNameForLookup] = layer
 
         layer.on('mouseover', () => {
           // reset previous hovered if it's different and not the selected
@@ -353,13 +423,25 @@ onMounted(async () => {
 </script>
 
 <template>
-   <div class="map-wrapper">
-    <div ref="mapContainer" class="map-container"></div>
-    <div class="vignette"></div>
-  </div>
-  
-  <!-- Details panel -->
-  <div v-if="selected.visible" class="details-panel">
+  <!-- Tek kök eleman: v-show ile görünürlük burada kontrol edilir (App.vue
+  'Harita' sekmesi seçili olmadığında bunu gizler). Component'in birden fazla
+  kök elemanı olsaydı v-show sadece ilkine uygulanırdı. -->
+  <div class="map-tab-root" v-show="isActive">
+    <div class="map-wrapper">
+      <div ref="mapContainer" class="map-container"></div>
+      <div class="vignette"></div>
+    </div>
+
+    <!-- Liman dropdown: seçilince o ülkeye odaklanır (tıklamayla aynı davranış) -->
+    <div class="port-dropdown">
+      <select :value="selectedFacility || ''" @change="focusOnFacility($event.target.value)">
+        <option value="">{{ t('mapSelectPort') }}</option>
+        <option v-for="fac in availableFacilities" :key="fac" :value="fac">{{ facilityLabel(fac) }}</option>
+      </select>
+    </div>
+
+    <!-- Details panel -->
+    <div v-if="selected.visible" class="details-panel">
     <div class="details-header">
       <strong>{{ countryName(selected.trName) }}</strong>
       <button class="close-btn" @click="closeDetails()">✕</button>
@@ -387,24 +469,26 @@ onMounted(async () => {
           </li>
         </ul>
         <p v-if="lockedNotice" class="facility-locked-notice">{{ t('facilityLockedNotice') }}</p>
-        <p v-if="selected.ports.some(p => selectedFacility === PORT_NAME_TO_FACILITY[p.name])" class="facility-confirm">
-          {{ t('facilitySelectedInfo') }}
-        </p>
+        <template v-if="selected.ports.some(p => selectedFacility === PORT_NAME_TO_FACILITY[p.name])">
+          <p v-if="isLoggedIn" class="facility-confirm">{{ t('facilitySelectedInfo') }}</p>
+          <button v-if="isLoggedIn" class="open-dashboard-btn" @click="requestTab('chat')">{{ t('openChatFromMap') }}</button>
+        </template>
       </div>
       <div v-else class="no-ports">{{ t('noPort') }}</div>
+    </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.map-tab-root {
+  position: absolute;
+  inset: 0;
+}
+
 .map-wrapper {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100vw;
-  height: 100vh;
+  position: absolute;
+  inset: 0;
   z-index: 0; /* restore map stacking so it's visible while UI elements stay above */
   background: linear-gradient(180deg, #eaf4fc 0%, #d5ebfb 45%, #bfe0f7 100%); /* açık mavi deniz */
 }
@@ -452,14 +536,40 @@ onMounted(async () => {
 </style>
 
 <style scoped>
+.port-dropdown {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 1500;
+}
+
+.port-dropdown select {
+  color-scheme: dark;
+  background: rgba(6, 44, 67, 0.9);
+  color: #ffffff;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  border-radius: 10px;
+  padding: 0.55rem 0.8rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.35);
+}
+
+.port-dropdown select option {
+  color: #ffffff;
+  background: #0c2438;
+}
+
 .details-panel {
-  position: fixed;
-  left: 16px; /* pin to top-left corner */
+  position: absolute;
+  left: 16px; /* pin to top-left corner of the map tab area */
   top: 16px;
   right: auto;
   width: 360px;
-  max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 32px);
+  max-width: calc(100% - 32px);
+  max-height: calc(100% - 32px);
   overflow: auto;
   background: rgba(6, 44, 67, 0.98);
   color: white;
@@ -492,6 +602,18 @@ onMounted(async () => {
 .facility-confirm { color: #bbf7d0; font-size: 0.85rem; margin: 6px 0 0; font-weight: 600; }
 .facility-locked-notice { color: #fca5a5; font-size: 0.85rem; margin: 6px 0 0; font-weight: 600; }
 
+.open-dashboard-btn {
+  margin-top: 8px;
+  background: rgba(34, 211, 238, 0.18);
+  border: 1px solid rgba(34, 211, 238, 0.4);
+  color: #e0f7fb;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.open-dashboard-btn:hover { background: rgba(34, 211, 238, 0.3); }
+
 /* Compact weather */
 .weather-compact-row { display:flex; gap:8px; align-items:center }
 .weather-icon-small { font-size:1.05rem; line-height:1 }
@@ -505,6 +627,8 @@ onMounted(async () => {
 /* Ensure details panel stays within viewport */
 @media (max-width: 900px) {
   .details-panel { left: 12px; right: 12px; width: auto; top: 64px; }
+  .port-dropdown { top: 10px; right: 10px; }
+  .port-dropdown select { padding: 0.4rem 0.6rem; font-size: 0.78rem; }
 }
 .details-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px }
 .details-body { font-size:0.9rem }

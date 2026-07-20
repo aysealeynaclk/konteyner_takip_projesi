@@ -3,7 +3,10 @@ import { ref, computed, watch, onMounted } from 'vue'
 import axios from 'axios'
 import { t, transactionTypeLabel, freightKindLabel, recordStatusLabel } from '../i18n'
 
-const FACILITY_YARD_PREFIX = { YCT: 'YCT', GBZ: 'TRGEB', ANK: 'TRANK' }
+const FACILITY_YARD_PREFIX = {
+  YCT: 'YCT', GBZ: 'TRGEB', ANK: 'TRANK',
+  MXK: 'TRMXK', TKD: 'TRTKD', TAR: 'TRTAR',
+}
 const NEW_OPTION = '__new__'
 
 const props = defineProps({
@@ -541,59 +544,82 @@ async function cancelRecord(record) {
 .admin-panel {
   flex: 1;
   overflow-y: auto;
-  padding: 0.85rem;
+  padding: 1.5rem;
   color: white;
   font-family: 'Segoe UI', system-ui, sans-serif;
   font-size: 0.85rem;
 }
 
+.admin-tab-content,
+.admin-tabs {
+  max-width: 520px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
 .admin-tabs {
   display: flex;
-  gap: 0.4rem;
-  margin-bottom: 0.85rem;
+  gap: 0.6rem;
+  margin-bottom: 1.25rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 0.4rem;
 }
 
 .admin-tabs button {
   flex: 1;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: rgba(255, 255, 255, 0.7);
-  padding: 0.45rem;
-  border-radius: 8px;
-  font-size: 0.78rem;
-  font-weight: 600;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.55);
+  padding: 0.7rem;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  font-weight: 700;
   cursor: pointer;
+  transition: background 0.15s, color 0.15s;
 }
 
 .admin-tabs button.active {
-  background: rgba(34, 211, 238, 0.25);
-  color: white;
-  border-color: rgba(34, 211, 238, 0.4);
+  background: linear-gradient(135deg, #0891b2, #22d3ee);
+  color: #052030;
+  box-shadow: 0 4px 14px rgba(34, 211, 238, 0.25);
 }
 
 .admin-tab-content {
   display: flex;
   flex-direction: column;
-  gap: 0.65rem;
+  gap: 1.1rem;
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
-  font-size: 0.78rem;
-  color: rgba(255, 255, 255, 0.7);
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .field input,
 .field select {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
-  padding: 0.5rem 0.6rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  padding: 0.8rem 1rem;
   color: white;
-  font-size: 0.85rem;
+  font-size: 0.92rem;
   outline: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.field input:focus,
+.field select:focus {
+  border-color: rgba(34, 211, 238, 0.5);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.field input::placeholder {
+  color: rgba(255, 255, 255, 0.3);
 }
 
 .field select option {
@@ -682,13 +708,13 @@ async function cancelRecord(record) {
 }
 
 .submit-btn {
-  background: linear-gradient(135deg, #0c4a6e, #0891b2);
-  color: white;
+  background: linear-gradient(135deg, #0891b2, #22d3ee);
+  color: #052030;
   border: none;
-  padding: 0.6rem;
-  border-radius: 8px;
-  font-weight: 600;
-  font-size: 0.85rem;
+  padding: 0.85rem;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 0.92rem;
   cursor: pointer;
 }
 

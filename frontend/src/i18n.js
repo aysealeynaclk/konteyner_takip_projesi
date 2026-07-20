@@ -35,6 +35,7 @@ const dict = {
     facilitySelectHint: 'Chatbot için seçmek üzere tıklayın',
     facilitySelectedInfo: '✅ Artık chatbotta bu liman hakkında soru sorabilirsiniz.',
     facilityLockedNotice: '⚠️ Aktif bir sohbet sürüyor, liman değiştirilemez. Yeni sohbet başlatınca değiştirebilirsiniz.',
+    openChatFromMap: '💬 Chatbot\'a Git',
     chatSelectFacilityPrompt: 'Sohbete başlamadan önce bir liman seçin:',
     chatSelectFacilityPlaceholder: 'Liman seçin',
     chatFacilityInfo: 'Şu an bilgi edindiğiniz liman:',
@@ -51,6 +52,11 @@ const dict = {
     chatClose: 'Kapat',
     chatEmptyHistory: 'Henüz kayıtlı sohbet yok.',
     chatEmptyState: 'Bir konteyner numarası veya limana dair bir soru sorarak başlayabilirsin.',
+    chatHeroTitle: 'Nasıl yardımcı olabilirim?',
+    chatHeroSubtitle: 'Bir konteyner numarası yaz ya da limanlar hakkında soru sor.',
+    chatSuggestion1: 'Bu terminalde kaç konteyner var?',
+    chatSuggestion2: 'Bugün en yoğun saat hangisiydi?',
+    chatSuggestion3: 'Son giren konteyner hangisi?',
     chatInputPlaceholder: 'Bir soru yaz...',
     chatSend: 'Gönder',
     chatConnectionError: 'Üzgünüm, sunucuya bağlanırken bir sorun oluştu.',
@@ -118,6 +124,44 @@ const dict = {
     freightKindFCL: 'Dolu (FCL)',
     freightKindMTY: 'Boş (MTY)',
     freightKindBBK: 'Parça Yük (BBK)',
+
+    dashboardButtonTitle: 'Dashboard',
+    dashboardTitle: 'Dashboard',
+    dashboardSelectFacility: 'Liman seçin',
+    mapSelectPort: '📍 Liman seçin',
+    dashboardNoFacility: 'Grafikleri görmek için bir liman seçin.',
+    dashboardAllFacilities: 'Tüm Limanlar (Genel)',
+    dashboardActivityTitle: 'Son İşlemleriniz',
+    dashboardActivityEmpty: 'Henüz bir işlem yok.',
+    dashboardActivityChatbotQuery: 'Konteyner sorgulandı',
+    dashboardActivityFacilityViewed: 'limanına bakıldı',
+    dashboardActivityAdminRecordAdded: 'Yeni kayıt eklendi',
+    dashboardCurrentInYard: 'Şu an sahada',
+    dashboardTodayEntries: 'Bugünkü giriş',
+    dashboardDailyAverage: 'Günlük ortalama',
+    dashboardAvgDwell: 'Ortalama kalış (dk)',
+    dashboardMinDwell: 'En kısa (dk)',
+    dashboardMaxDwell: 'En uzun (dk)',
+    dashboardPeriodWeek: 'Hafta',
+    dashboardPeriodMonth: 'Ay',
+    dashboardPeriodCompareTitle: 'Dönem Karşılaştırması',
+    dashboardChangeLabel: 'Değişim',
+    dashboardCurrentPeriod: 'Bu dönem',
+    dashboardPreviousPeriod: 'Önceki dönem',
+    dashboardNoComparisonData: 'Karşılaştırma için yeterli geçmiş veri yok.',
+    dashboardHourlyTitle: 'Saatlik Yoğunluk',
+    dashboardWeekdayTitle: 'Haftalık Yoğunluk',
+    dashboardMonthlyTitle: 'Aylık / Mevsimsel Yoğunluk',
+    dashboardEntriesUnit: 'giriş',
+    dashboardLoading: 'Yükleniyor...',
+
+    navDashboard: 'Kontrol Paneli',
+    navMap: 'Harita',
+    navChat: 'Sohbet',
+    dashboardGuestCtaTitle: "Corex Global Operations'a Hoş Geldiniz",
+    dashboardGuestCtaText: 'Şu an misafir olarak görüntülüyorsunuz. Konteyner asistanına erişmek için giriş yapın.',
+    chatLockedTitle: 'Konteyner Asistanı (Chatbot)',
+    chatLockedText: 'Sadece giriş yapmış kullanıcılar için aktiftir. Doğal dilde soru sorup anında cevap almak için giriş yapın.',
   },
   en: {
     loginSubtitle: 'Sign in to your account',
@@ -141,6 +185,7 @@ const dict = {
     facilitySelectHint: 'Click to select for the chatbot',
     facilitySelectedInfo: '✅ You can now ask the chatbot about this port.',
     facilityLockedNotice: '⚠️ A chat is in progress, the port cannot be changed. Start a new chat to change it.',
+    openChatFromMap: '💬 Go to Chatbot',
     chatSelectFacilityPrompt: 'Please select a port before starting the chat:',
     chatSelectFacilityPlaceholder: 'Select a port',
     chatFacilityInfo: 'Currently viewing:',
@@ -157,6 +202,11 @@ const dict = {
     chatClose: 'Close',
     chatEmptyHistory: 'No saved chats yet.',
     chatEmptyState: 'You can start by asking about a container number or a port.',
+    chatHeroTitle: 'How can I help?',
+    chatHeroSubtitle: 'Enter a container number or ask a question about ports.',
+    chatSuggestion1: 'How many containers are in this terminal?',
+    chatSuggestion2: 'What was the busiest hour today?',
+    chatSuggestion3: 'Which container entered most recently?',
     chatInputPlaceholder: 'Type a question...',
     chatSend: 'Send',
     chatConnectionError: 'Sorry, something went wrong connecting to the server.',
@@ -224,6 +274,44 @@ const dict = {
     freightKindFCL: 'Full (FCL)',
     freightKindMTY: 'Empty (MTY)',
     freightKindBBK: 'Break Bulk (BBK)',
+
+    dashboardButtonTitle: 'Dashboard',
+    dashboardTitle: 'Dashboard',
+    dashboardSelectFacility: 'Select a port',
+    mapSelectPort: '📍 Select a port',
+    dashboardNoFacility: 'Select a port to see the charts.',
+    dashboardAllFacilities: 'All Ports (Overview)',
+    dashboardActivityTitle: 'Your Recent Activity',
+    dashboardActivityEmpty: 'No activity yet.',
+    dashboardActivityChatbotQuery: 'Container queried',
+    dashboardActivityFacilityViewed: 'port viewed',
+    dashboardActivityAdminRecordAdded: 'New record added',
+    dashboardCurrentInYard: 'Currently in yard',
+    dashboardTodayEntries: "Today's entries",
+    dashboardDailyAverage: 'Daily average',
+    dashboardAvgDwell: 'Avg. dwell (min)',
+    dashboardMinDwell: 'Shortest (min)',
+    dashboardMaxDwell: 'Longest (min)',
+    dashboardPeriodWeek: 'Week',
+    dashboardPeriodMonth: 'Month',
+    dashboardPeriodCompareTitle: 'Period Comparison',
+    dashboardChangeLabel: 'Change',
+    dashboardCurrentPeriod: 'This period',
+    dashboardPreviousPeriod: 'Previous period',
+    dashboardNoComparisonData: 'Not enough historical data to compare.',
+    dashboardHourlyTitle: 'Hourly Density',
+    dashboardWeekdayTitle: 'Weekly Density',
+    dashboardMonthlyTitle: 'Monthly / Seasonal Density',
+    dashboardEntriesUnit: 'entries',
+    dashboardLoading: 'Loading...',
+
+    navDashboard: 'Dashboard',
+    navMap: 'Map',
+    navChat: 'Chat',
+    dashboardGuestCtaTitle: 'Welcome to Corex Global Operations',
+    dashboardGuestCtaText: "You're currently viewing as a guest. Log in to access the container assistant.",
+    chatLockedTitle: 'Container Assistant (Chatbot)',
+    chatLockedText: 'Only available to logged-in users. Log in to ask questions in natural language and get instant answers.',
   },
 }
 
@@ -294,6 +382,35 @@ export function countryName(trName) {
   if (!trName) return ''
   if (language.value === 'tr') return trName
   return countryNamesEn[trName] || trName
+}
+
+const weekdayNamesEn = {
+  'Pazartesi': 'Monday', 'Salı': 'Tuesday', 'Çarşamba': 'Wednesday',
+  'Perşembe': 'Thursday', 'Cuma': 'Friday', 'Cumartesi': 'Saturday', 'Pazar': 'Sunday',
+}
+const monthNamesEn = {
+  'Ocak': 'January', 'Şubat': 'February', 'Mart': 'March', 'Nisan': 'April',
+  'Mayıs': 'May', 'Haziran': 'June', 'Temmuz': 'July', 'Ağustos': 'August',
+  'Eylül': 'September', 'Ekim': 'October', 'Kasım': 'November', 'Aralık': 'December',
+}
+const seasonNamesEn = { 'İlkbahar': 'Spring', 'Yaz': 'Summer', 'Sonbahar': 'Autumn', 'Kış': 'Winter' }
+
+export function weekdayLabel(trName) {
+  if (!trName) return ''
+  if (language.value === 'tr') return trName
+  return weekdayNamesEn[trName] || trName
+}
+
+export function monthLabel(trName) {
+  if (!trName) return ''
+  if (language.value === 'tr') return trName
+  return monthNamesEn[trName] || trName
+}
+
+export function seasonLabel(trName) {
+  if (!trName) return ''
+  if (language.value === 'tr') return trName
+  return seasonNamesEn[trName] || trName
 }
 
 const TRANSACTION_TYPE_KEYS = {

@@ -13,7 +13,6 @@ const props = defineProps({
 const API_URL = '/api/chat'
 const HISTORY_API_URL = '/api/chat/sessions'
 
-const isOpen = ref(false)
 const showHistory = ref(false)
 const showAdminPanel = ref(false)
 const messages = ref([])
@@ -81,11 +80,6 @@ function scrollToBottom() {
   })
 }
 
-function toggleChat() {
-  isOpen.value = !isOpen.value
-  if (isOpen.value) scrollToBottom()
-}
-
 function toggleHistory() {
   showHistory.value = !showHistory.value
   showAdminPanel.value = false
@@ -141,11 +135,17 @@ function handleEnter(e) {
   if (!e.shiftKey) sendMessage()
 }
 
+function askSuggestion(text) {
+  userInput.value = text
+  sendMessage()
+}
+
 // Mevcut sohbeti "geçmiş" olarak kaydedip yeni bir sohbete başlar
 function startNewChat() {
   messages.value = []
   activeSessionId.value = null
   showHistory.value = false
+  showAdminPanel.value = false
 }
 
 function loadSession(session) {
@@ -222,13 +222,7 @@ watch(hasActiveChat, (locked) => {
 </script>
 
 <template>
-  <!-- Kapalıyken görünen amblem -->
-  <button v-if="!isOpen" class="chat-bubble" @click="toggleChat">
-    <img src="/logo-icon.png" alt="logo" class="bubble-img" />
-  </button>
-
-  <!-- Açık sohbet penceresi -->
-  <div v-else class="chat-window">
+  <div class="chat-window">
     <header class="chat-header">
       <div class="header-left">
         <img src="/logo-icon.png" alt="logo" class="header-img" />
@@ -243,9 +237,6 @@ watch(hasActiveChat, (locked) => {
         </button>
         <button v-if="isAdmin" class="icon-btn" :title="t('adminButtonTitle')" @click="toggleAdminPanel">
           ➕
-        </button>
-        <button class="icon-btn" :title="t('chatClose')" @click="toggleChat">
-          ✕
         </button>
       </div>
     </header>
@@ -312,31 +303,58 @@ watch(hasActiveChat, (locked) => {
         </select>
       </div>
 
-      <div v-if="messages.length === 0" class="empty-state">
-        <p>{{ t('chatEmptyState') }}</p>
-      </div>
+      <div v-if="messages.length === 0" class="hero-empty">
+        <img src="/logo-icon.png" alt="logo" class="hero-icon" />
+        <h2>{{ t('chatHeroTitle') }}</h2>
+        <p>{{ t('chatHeroSubtitle') }}</p>
 
-      <div
-        v-for="(msg, index) in messages"
-        :key="index"
-        class="message-row"
-        :class="msg.role"
-      >
-        <div class="bubble" :class="{ error: msg.isError }">
-          {{ msg.content }}
+        <div class="hero-input-row">
+          <textarea
+            v-model="userInput"
+            :placeholder="t('chatInputPlaceholder')"
+            rows="1"
+            @keydown.enter.prevent="handleEnter"
+          ></textarea>
+          <button class="send-btn" :disabled="!userInput.trim() || isLoading" @click="sendMessage()">➤</button>
+        </div>
+
+        <div class="hero-suggestions">
+          <button class="suggestion-chip" @click="askSuggestion(t('chatSuggestion1'))">
+            📦 {{ t('chatSuggestion1') }}
+          </button>
+          <button class="suggestion-chip" @click="askSuggestion(t('chatSuggestion2'))">
+            ⏱️ {{ t('chatSuggestion2') }}
+          </button>
+          <button class="suggestion-chip" @click="askSuggestion(t('chatSuggestion3'))">
+            🚢 {{ t('chatSuggestion3') }}
+          </button>
         </div>
       </div>
 
-      <div v-if="isLoading" class="message-row assistant">
-        <div class="bubble typing">
-          <span class="dot"></span>
-          <span class="dot"></span>
-          <span class="dot"></span>
+      <div v-else class="messages-column">
+        <div
+          v-for="(msg, index) in messages"
+          :key="index"
+          class="message-row"
+          :class="msg.role"
+        >
+          <div class="bubble" :class="{ error: msg.isError }">
+            {{ msg.content }}
+          </div>
+        </div>
+
+        <div v-if="isLoading" class="message-row assistant">
+          <div class="bubble typing">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </div>
         </div>
       </div>
     </main>
 
-    <footer v-if="!showHistory && !showAdminPanel && selectedFacility" class="input-area">
+    <footer v-if="!showHistory && !showAdminPanel && selectedFacility && messages.length > 0" class="input-area">
+      <div class="input-area-inner">
       <textarea
         v-model="userInput"
         :placeholder="t('chatInputPlaceholder')"
@@ -346,6 +364,7 @@ watch(hasActiveChat, (locked) => {
       <button class="send-btn" :disabled="!userInput.trim() || isLoading" @click="sendMessage()">
         {{ t('chatSend') }}
       </button>
+      </div>
     </footer>
   </div>
 </template>
@@ -353,42 +372,6 @@ watch(hasActiveChat, (locked) => {
 <style scoped>
 * {
   box-sizing: border-box;
-}
-
-.chat-bubble {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  width: 72px;
-  height: 72px;
-  border-radius: 50%;
-  background: transparent;
-  border: none;
-  box-shadow: 0 4px 16px rgba(2, 6, 23, 0.35);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2200;
-  transition: transform 0.2s;
-}
-
-.chat-bubble:hover {
-  transform: scale(1.08);
-}
-
-.bubble-icon {
-  font-size: 1.6rem;
-}
-
-.bubble-img {
-  width: 72px;
-  height: 72px;
-  object-fit: cover;
-  border-radius: 50%;
-  background: transparent;
-  padding: 0;
-  box-shadow: 0 10px 30px rgba(2,6,23,0.14);
 }
 
 .header-img {
@@ -401,22 +384,12 @@ watch(hasActiveChat, (locked) => {
 }
 
 .chat-window {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  width: 380px;
-  height: 560px;
-  max-height: 80vh;
-  background: rgba(8, 47, 73, 0.35);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 18px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #0c2438 0%, #051627 100%);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  z-index: 2200;
   font-family: 'Segoe UI', system-ui, sans-serif;
 }
 
@@ -611,12 +584,109 @@ watch(hasActiveChat, (locked) => {
   gap: 0.65rem;
 }
 
-.empty-state {
-  text-align: center;
-  color: #64748b;
+.messages-column {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.hero-empty {
   margin: auto;
-  padding: 1rem;
-  font-size: 0.88rem;
+  width: 100%;
+  max-width: 620px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.4rem;
+  padding: 2rem 1rem;
+}
+
+.hero-icon {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  margin-bottom: 0.5rem;
+}
+
+.hero-empty h2 {
+  margin: 0;
+  font-size: 1.4rem;
+  color: white;
+}
+
+.hero-empty p {
+  margin: 0 0 1.25rem;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.92rem;
+}
+
+.hero-input-row {
+  width: 100%;
+  display: flex;
+  gap: 0.6rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
+  padding: 0.5rem 0.6rem 0.5rem 1.1rem;
+}
+
+.hero-input-row textarea {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 0.95rem;
+  font-family: inherit;
+  resize: none;
+  outline: none;
+  padding: 0.5rem 0;
+}
+
+.hero-input-row textarea::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.hero-input-row .send-btn {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  padding: 0;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+}
+
+.hero-suggestions {
+  margin-top: 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  justify-content: center;
+}
+
+.suggestion-chip {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.8);
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-align: left;
+  max-width: 200px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.suggestion-chip:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(34, 211, 238, 0.35);
 }
 
 .message-row {
@@ -686,12 +756,17 @@ watch(hasActiveChat, (locked) => {
 }
 
 .input-area {
-  display: flex;
-  gap: 0.5rem;
   padding: 0.75rem;
   background: rgba(255, 255, 255, 0.06);
   backdrop-filter: blur(10px);
   border-top: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.input-area-inner {
+  display: flex;
+  gap: 0.5rem;
+  max-width: 760px;
+  margin: 0 auto;
 }
 
 .input-area textarea {
@@ -734,29 +809,4 @@ watch(hasActiveChat, (locked) => {
   cursor: not-allowed;
 }
 
-/* Mobil: sohbet penceresi neredeyse tam ekran olsun, sabit 380x560 masaüstü
-   boyutu küçük telefon ekranlarında taşma/kesilme yaratıyordu. */
-@media (max-width: 600px) {
-  .chat-bubble {
-    bottom: 16px;
-    right: 16px;
-    width: 64px;
-    height: 64px;
-  }
-
-  .bubble-img {
-    width: 64px;
-    height: 64px;
-  }
-
-  .chat-window {
-    top: 12px;
-    left: 12px;
-    right: 12px;
-    bottom: 12px;
-    width: auto;
-    height: auto;
-    max-height: none;
-  }
-}
 </style>
