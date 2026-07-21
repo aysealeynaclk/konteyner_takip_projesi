@@ -2,10 +2,17 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import axios from 'axios'
 import { t, transactionTypeLabel, freightKindLabel, recordStatusLabel } from '../i18n'
+import { facilityLabel, isLightShadeFacility } from '../facility'
 
 const FACILITY_YARD_PREFIX = {
   YCT: 'YCT', GBZ: 'TRGEB', ANK: 'TRANK',
   MXK: 'TRMXK', TKD: 'TRTKD', TAR: 'TRTAR',
+  OSL: 'TROSL', GVL: 'TRGVL', STO: 'TRSTO',
+  AQJ: 'TRAQJ', LUX: 'TRLUX', PAI: 'TRPAI',
+  PBO: 'TRPBO', PRQ: 'TRPRQ',
+  LIS: 'TRLIS', FIG: 'TRFIG', SOT: 'TRSOT',
+  LEI: 'TRLEI', AVE: 'TRAVE', SET: 'TRSET',
+  TER: 'TRTER', HUE: 'TRHUE', FRO: 'TRFRO', ELV: 'TRELV',
 }
 const NEW_OPTION = '__new__'
 
@@ -69,93 +76,97 @@ const containerNoStatus = computed(() => containerNoValidity(newRecord.value.con
 const searchContainerNoStatus = computed(() => containerNoValidity(searchQuery.value))
 
 // --- Saha konumu (loc_name) hiyerarşik seçici: LocType -> Blok/Plaka -> Bay-Row/Kat ---
-const locPicker = ref({
-  locType: '',
-  blocks: [],
-  selectedBlock: '',
-  addresses: [],
-  selectedAddress: '',
-  newBayRow: '',
-  newTier: '',
-  plates: [],
-  selectedPlate: '',
-  newPlate: '',
-})
-
-function resetLocPicker() {
-  locPicker.value = {
+// Hem "kayıt ekle" formunda hem de arama sonuçlarındaki düzenleme kartlarında
+// (her kayıt için ayrı bir örnek) kullanılan genel yardımcılar.
+function makeLocPicker() {
+  return {
     locType: '', blocks: [], selectedBlock: '', addresses: [], selectedAddress: '',
     newBayRow: '', newTier: '', plates: [], selectedPlate: '', newPlate: '',
   }
 }
 
-// Liman değişince blok/plaka listeleri geçersiz olur, sıfırlanır.
-watch(() => newRecord.value.facility_id, resetLocPicker)
-
-async function onLocTypeChange() {
-  locPicker.value.selectedBlock = ''
-  locPicker.value.addresses = []
-  locPicker.value.selectedAddress = ''
-  locPicker.value.selectedPlate = ''
-  locPicker.value.newPlate = ''
-  locPicker.value.blocks = []
-  locPicker.value.plates = []
-  if (!newRecord.value.facility_id || !locPicker.value.locType) return
+async function loadLocTypeOptions(picker, facilityId) {
+  picker.selectedBlock = ''
+  picker.addresses = []
+  picker.selectedAddress = ''
+  picker.selectedPlate = ''
+  picker.newPlate = ''
+  picker.blocks = []
+  picker.plates = []
+  if (!facilityId || !picker.locType) return
   try {
     const response = await axios.get('/api/admin/loc-options', {
-      params: { facility_id: newRecord.value.facility_id, loc_type: locPicker.value.locType },
+      params: { facility_id: facilityId, loc_type: picker.locType },
       headers: authHeaders(),
     })
-    if (locPicker.value.locType === 'TRUCK') {
-      locPicker.value.plates = response.data.plates || []
+    if (picker.locType === 'TRUCK') {
+      picker.plates = response.data.plates || []
     } else {
-      locPicker.value.blocks = response.data.blocks || []
+      picker.blocks = response.data.blocks || []
     }
   } catch (error) {
     // sessizce boş bırak, kullanıcı "yeni" seçeneğinden elle girebilir
   }
 }
 
-async function onBlockChange() {
-  locPicker.value.selectedAddress = ''
-  locPicker.value.newBayRow = ''
-  locPicker.value.newTier = ''
-  locPicker.value.addresses = []
-  if (!locPicker.value.selectedBlock) return
+async function loadBlockAddresses(picker, facilityId) {
+  picker.selectedAddress = ''
+  picker.newBayRow = ''
+  picker.newTier = ''
+  picker.addresses = []
+  if (!picker.selectedBlock) return
   try {
     const response = await axios.get('/api/admin/loc-options', {
-      params: { facility_id: newRecord.value.facility_id, loc_type: 'YARD', block: locPicker.value.selectedBlock },
+      params: { facility_id: facilityId, loc_type: 'YARD', block: picker.selectedBlock },
       headers: authHeaders(),
     })
-    locPicker.value.addresses = response.data.addresses || []
+    picker.addresses = response.data.addresses || []
   } catch (error) {
-    locPicker.value.addresses = []
+    picker.addresses = []
   }
 }
 
-// Facility'nin gerçek verisinde kat (tier) bilgisi var mı? (YCT var, GBZ yok)
-const blockHasTierData = computed(() => locPicker.value.addresses.some(a => a.loc_tier !== null && a.loc_tier !== undefined))
+function blockHasTier(picker) {
+  return picker.addresses.some(a => a.loc_tier !== null && a.loc_tier !== undefined)
+}
 
-const builtLocName = computed(() => {
-  const p = locPicker.value
-  if (p.locType === 'TRUCK') {
-    const plate = p.selectedPlate === NEW_OPTION ? p.newPlate.trim().toUpperCase() : p.selectedPlate
+function buildLocName(picker, facilityId) {
+  if (picker.locType === 'TRUCK') {
+    const plate = picker.selectedPlate === NEW_OPTION ? picker.newPlate.trim().toUpperCase() : picker.selectedPlate
     return plate ? `T-${plate}-TIP-Y` : ''
   }
-  if (p.locType === 'YARD') {
-    const prefix = FACILITY_YARD_PREFIX[newRecord.value.facility_id] || newRecord.value.facility_id
-    if (p.selectedAddress && p.selectedAddress !== NEW_OPTION) {
-      const suffix = p.selectedAddress.replace('.', '')
+  if (picker.locType === 'YARD') {
+    const prefix = FACILITY_YARD_PREFIX[facilityId] || facilityId
+    if (picker.selectedAddress && picker.selectedAddress !== NEW_OPTION) {
+      const suffix = picker.selectedAddress.replace('.', '')
       return `Y-${prefix}-${suffix}`
     }
-    if (p.selectedAddress === NEW_OPTION && p.selectedBlock && p.newBayRow.trim()) {
-      const suffix = `${p.selectedBlock}${p.newBayRow.trim()}${p.newTier.trim()}`
+    if (picker.selectedAddress === NEW_OPTION && picker.selectedBlock && picker.newBayRow.trim()) {
+      const suffix = `${picker.selectedBlock}${picker.newBayRow.trim()}${picker.newTier.trim()}`
       return `Y-${prefix}-${suffix}`
     }
     return ''
   }
   return ''
-})
+}
+
+const locPicker = ref(makeLocPicker())
+
+// Liman değişince blok/plaka listeleri geçersiz olur, sıfırlanır.
+watch(() => newRecord.value.facility_id, () => { locPicker.value = makeLocPicker() })
+
+function onLocTypeChange() {
+  return loadLocTypeOptions(locPicker.value, newRecord.value.facility_id)
+}
+
+function onBlockChange() {
+  return loadBlockAddresses(locPicker.value, newRecord.value.facility_id)
+}
+
+// Facility'nin gerçek verisinde kat (tier) bilgisi var mı? (YCT var, GBZ yok)
+const blockHasTierData = computed(() => blockHasTier(locPicker.value))
+
+const builtLocName = computed(() => buildLocName(locPicker.value, newRecord.value.facility_id))
 
 watch(builtLocName, (value) => {
   newRecord.value.loc_name = value
@@ -197,7 +208,7 @@ async function submitNewRecord() {
       freight_kind: FREIGHT_KINDS[0],
       damage: false,
     }
-    resetLocPicker()
+    locPicker.value = makeLocPicker()
   } catch (error) {
     addError.value = error.response?.data?.detail || t('adminErrorGeneric')
   } finally {
@@ -248,12 +259,31 @@ function setRecordMessage(recordId, text, isError) {
   recordMessages.value[recordId] = text ? { text, isError } : null
 }
 
+// Arama sonuçlarındaki her kayıt kartının kendi saha konumu seçicisi olur
+// (add tab'daki ile aynı yapı) — serbest metinle değil, seçerek belirlenir.
+const detailLocPickers = ref({})
+
 function seedDetailDraft(record) {
   detailDrafts.value[record.id] = {
     loc_name: record.loc_name || '',
     damage: !!record.damage,
     freight_kind: record.freight_kind,
   }
+  detailLocPickers.value[record.id] = makeLocPicker()
+}
+
+function onDetailLocTypeChange(record) {
+  return loadLocTypeOptions(detailLocPickers.value[record.id], searchFacilityId.value)
+}
+
+function onDetailBlockChange(record) {
+  return loadBlockAddresses(detailLocPickers.value[record.id], searchFacilityId.value)
+}
+
+// Seçiciden henüz yeni bir konum seçilmediyse kaydın mevcut konumunu gösterir.
+function detailLocPreview(record) {
+  const built = buildLocName(detailLocPickers.value[record.id], searchFacilityId.value)
+  return built || detailDrafts.value[record.id]?.loc_name || ''
 }
 
 // Aktif (iptal edilmemiş) kayıtlar üstte, iptal edilenler altta.
@@ -290,6 +320,13 @@ function isOpenRecord(record) {
   return record.transaction_status === 'IN_PROGRESS' && !record.time_exited_yard
 }
 
+// DB'deki giriş tarihini datetime-local input'un "min" değeri için normalize eder
+// (bazı kayıtlarda "YYYY-MM-DD HH:MM:SS", bazılarında "YYYY-MM-DDTHH:MM" olabiliyor).
+function toDatetimeLocalMin(value) {
+  if (!value) return undefined
+  return value.replace(' ', 'T').slice(0, 16)
+}
+
 async function submitExit(record) {
   const exitTime = exitDrafts.value[record.id]
   if (!exitTime) return
@@ -313,11 +350,12 @@ async function submitDetailsUpdate(record) {
   const draft = detailDrafts.value[record.id]
   if (!draft) return
   setRecordMessage(record.id, '', false)
+  const locName = detailLocPreview(record)
   try {
     const response = await axios.patch(
       `/api/admin/containers/${record.id}`,
       {
-        loc_name: draft.loc_name.trim() || null,
+        loc_name: locName.trim() || null,
         damage: draft.damage,
         freight_kind: draft.freight_kind,
       },
@@ -362,7 +400,12 @@ async function cancelRecord(record) {
         <span>{{ t('adminFacility') }}</span>
         <select v-model="newRecord.facility_id">
           <option value="" disabled>{{ t('adminSelectFacility') }}</option>
-          <option v-for="fac in facilities" :key="fac" :value="fac">{{ fac }}</option>
+          <option
+            v-for="fac in facilities"
+            :key="fac"
+            :value="fac"
+            :class="{ 'option-light-shade': isLightShadeFacility(fac) }"
+          >{{ facilityLabel(fac) }}</option>
         </select>
       </label>
       <label class="field">
@@ -383,7 +426,7 @@ async function cancelRecord(record) {
       </label>
       <label class="field">
         <span>{{ t('adminExitTimeOptional') }}</span>
-        <input v-model="newRecord.time_exited_yard" type="datetime-local" />
+        <input v-model="newRecord.time_exited_yard" type="datetime-local" :min="newRecord.time_entered_yard || undefined" />
       </label>
       <div class="field loc-picker">
         <span>{{ t('adminLocName') }}</span>
@@ -464,7 +507,12 @@ async function cancelRecord(record) {
         <span>{{ t('adminFacility') }}</span>
         <select v-model="searchFacilityId" @change="onSearchFacilityChange">
           <option value="" disabled>{{ t('adminSelectFacility') }}</option>
-          <option v-for="fac in facilities" :key="fac" :value="fac">{{ fac }}</option>
+          <option
+            v-for="fac in facilities"
+            :key="fac"
+            :value="fac"
+            :class="{ 'option-light-shade': isLightShadeFacility(fac) }"
+          >{{ facilityLabel(fac) }}</option>
         </select>
       </label>
 
@@ -510,10 +558,55 @@ async function cancelRecord(record) {
         <div class="record-line">{{ transactionTypeLabel(record.transaction_type) }}</div>
 
         <div v-if="detailDrafts[record.id]" class="edit-details">
-          <label class="field">
+          <div class="field loc-picker">
             <span>{{ t('adminLocName') }}</span>
-            <input v-model="detailDrafts[record.id].loc_name" type="text" :placeholder="t('adminLocNamePlaceholder')" />
-          </label>
+
+            <select v-model="detailLocPickers[record.id].locType" @change="onDetailLocTypeChange(record)">
+              <option value="" disabled>{{ t('adminLocTypeSelect') }}</option>
+              <option value="YARD">{{ t('adminLocTypeYard') }}</option>
+              <option value="TRUCK">{{ t('adminLocTypeTruck') }}</option>
+            </select>
+
+            <!-- TRUCK: plaka seçimi -->
+            <select v-if="detailLocPickers[record.id].locType === 'TRUCK'" v-model="detailLocPickers[record.id].selectedPlate">
+              <option value="" disabled>{{ t('adminSelectPlate') }}</option>
+              <option v-for="p in detailLocPickers[record.id].plates" :key="p" :value="p">{{ p }}</option>
+              <option :value="NEW_OPTION">{{ t('adminNewPlate') }}</option>
+            </select>
+            <input
+              v-if="detailLocPickers[record.id].locType === 'TRUCK' && detailLocPickers[record.id].selectedPlate === NEW_OPTION"
+              v-model="detailLocPickers[record.id].newPlate"
+              type="text"
+              :placeholder="t('adminNewPlatePlaceholder')"
+            />
+
+            <!-- YARD: blok seçimi -->
+            <select v-if="detailLocPickers[record.id].locType === 'YARD'" v-model="detailLocPickers[record.id].selectedBlock" @change="onDetailBlockChange(record)">
+              <option value="" disabled>{{ t('adminSelectBlock') }}</option>
+              <option v-for="b in detailLocPickers[record.id].blocks" :key="b" :value="b">{{ b }}</option>
+            </select>
+
+            <!-- YARD: bay/row + kat seçimi -->
+            <select v-if="detailLocPickers[record.id].locType === 'YARD' && detailLocPickers[record.id].selectedBlock" v-model="detailLocPickers[record.id].selectedAddress">
+              <option value="" disabled>{{ t('adminSelectAddress') }}</option>
+              <option v-for="a in detailLocPickers[record.id].addresses" :key="a.loc_slot" :value="a.loc_slot">
+                {{ a.loc_slot }}<template v-if="a.loc_tier !== null && a.loc_tier !== undefined"> ({{ t('adminTier') }} {{ a.loc_tier }})</template>
+              </option>
+              <option :value="NEW_OPTION">{{ t('adminNewAddress') }}</option>
+            </select>
+            <div v-if="detailLocPickers[record.id].locType === 'YARD' && detailLocPickers[record.id].selectedAddress === NEW_OPTION" class="new-address-row">
+              <input v-model="detailLocPickers[record.id].newBayRow" type="text" :placeholder="t('adminNewBayRowPlaceholder')" maxlength="4" />
+              <input
+                v-if="detailLocPickers[record.id].addresses.some(a => a.loc_tier !== null && a.loc_tier !== undefined)"
+                v-model="detailLocPickers[record.id].newTier"
+                type="text"
+                :placeholder="t('adminNewTierPlaceholder')"
+                maxlength="1"
+              />
+            </div>
+
+            <div v-if="detailLocPreview(record)" class="loc-preview">{{ detailLocPreview(record) }}</div>
+          </div>
           <label class="field">
             <span>{{ t('adminFreightKind') }}</span>
             <select v-model="detailDrafts[record.id].freight_kind">
@@ -528,7 +621,7 @@ async function cancelRecord(record) {
         </div>
 
         <div v-if="isOpenRecord(record)" class="record-actions">
-          <input v-model="exitDrafts[record.id]" type="datetime-local" />
+          <input v-model="exitDrafts[record.id]" type="datetime-local" :min="toDatetimeLocalMin(record.time_entered_yard)" />
           <button @click="submitExit(record)" :disabled="!exitDrafts[record.id]">{{ t('adminCloseExit') }}</button>
         </div>
         <div v-if="record.transaction_status !== 'CANCEL'" class="record-actions">
@@ -624,6 +717,13 @@ async function cancelRecord(record) {
 
 .field select option {
   color: #0b1a2b;
+  background: #ffffff;
+}
+
+/* Harita dropdown'undaki gruplamayla aynı mantık (bkz. facility.js
+   LIGHT_SHADE_FACILITIES) — burada beyaz zemin üstünde hafif gri. */
+.field select option.option-light-shade {
+  background: #d8dde2;
 }
 
 .input-with-icon {

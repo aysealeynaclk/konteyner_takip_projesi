@@ -25,12 +25,41 @@ export const FACILITY_LABELS = {
   MXK: 'Marsaxlokk Terminali',
   TKD: 'Takoradi Terminali',
   TAR: 'Taranto Terminali',
+  OSL: 'Oslo Terminali',
+  GVL: 'Gävle Terminali',
+  STO: 'Stockholm Nord Terminali',
+  AQJ: 'Acajutla Terminali',
+  LUX: 'La Unión Terminali',
+  PAI: 'Paita Terminali',
+  PBO: 'Puerto Bolívar Terminali',
+  PRQ: 'Puerto Quetzal Terminali',
+  LIS: 'Liscont Terminali',
+  FIG: 'Figueira Da Foz Terminali',
+  SOT: 'Sotagus Terminali',
+  LEI: 'Leixões Terminali',
+  AVE: 'Aveiro Terminali',
+  SET: 'Setúbal Terminali',
+  TER: 'Tersado Terminali',
+  HUE: 'Huelva Terminali',
+  FRO: 'Ferrol Terminali',
+  ELV: 'Elvas Terminali',
 }
 
 export function facilityLabel(code) {
   if (!code) return ''
   const name = FACILITY_LABELS[code]
   return name ? `${name} (${code})` : code
+}
+
+// Liman dropdown'unda görsel gruplama: bu koddaki limanlar bir tık daha açık
+// renkte gösterilir (Gebze/Körfez/Ankara/Marsaxlokk/Taranto grubuyla aynı
+// tonda kalmayıp hafifçe ayrışsınlar diye) — kullanıcının verdiği sıra/gruba göre.
+export const LIGHT_SHADE_FACILITIES = new Set([
+  'OSL', 'GVL', 'STO', 'PBO', 'PAI', 'PRQ', 'AQJ', 'LUX', 'TKD',
+])
+
+export function isLightShadeFacility(code) {
+  return LIGHT_SHADE_FACILITIES.has(code)
 }
 
 // Haritadan bir liman seçildikten sonra "Chatbot'a Git" tıklandığında ilgili

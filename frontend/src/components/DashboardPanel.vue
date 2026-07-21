@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import axios from 'axios'
 import { t, language, weekdayLabel, monthLabel } from '../i18n'
-import { selectedFacility, availableFacilities, loadFacilities, facilityLabel } from '../facility'
+import { selectedFacility, availableFacilities, loadFacilities, facilityLabel, isLightShadeFacility } from '../facility'
 import { loadRecentActivity } from '../activity'
 import BarChart from './BarChart.vue'
 
@@ -70,6 +70,15 @@ const monthlyChartData = computed(() => {
   return MONTH_ORDER.filter(name => name in byName).map(name => ({ label: monthLabel(name).slice(0, 3), value: byName[name] }))
 })
 
+// "Tüm Limanlar" seçiliyken limanları birbiriyle karşılaştıran ek grafik —
+// her limanın günlük ortalama giriş sayısı (toplam değil — limanların
+// verideki gün sayısı farklı olabildiği için adil karşılaştırma sağlar),
+// dashboard'daki sabit liman sırasıyla.
+const facilityActivityChartData = computed(() => {
+  if (!analytics.value?.facility_activity) return []
+  return analytics.value.facility_activity.map(f => ({ label: f.facility_id, value: f.avg_entries_per_day }))
+})
+
 const changePercent = computed(() => analytics.value?.period_comparison?.change_percent ?? null)
 const changeArrow = computed(() => {
   if (changePercent.value === null) return ''
@@ -82,9 +91,16 @@ function activityLabel(item) {
   if (item.action_type === 'facility_viewed') {
     return `${facilityLabel(item.facility_id)} ${t('dashboardActivityFacilityViewed')}`
   }
-  if (item.action_type === 'admin_record_added') return t('dashboardActivityAdminRecordAdded')
-  if (item.action_type === 'chatbot_query') return t('dashboardActivityChatbotQuery')
-  return item.action_type
+
+  let base = item.action_type
+  if (item.action_type === 'admin_record_added') base = t('dashboardActivityAdminRecordAdded')
+  else if (item.action_type === 'chatbot_query') base = t('dashboardActivityChatbotQuery')
+
+  // "Tüm Limanlar" seçiliyken hangi limana ait olduğu belli olsun diye ek etiket.
+  if (!selectedFacility.value && item.facility_id) {
+    return `${base} — ${facilityLabel(item.facility_id)}`
+  }
+  return base
 }
 
 function formatActivityDate(value) {
@@ -109,7 +125,12 @@ function formatActivityDate(value) {
       <div class="facility-select-row">
         <select v-model="selectedFacility">
           <option value="">{{ t('dashboardAllFacilities') }}</option>
-          <option v-for="fac in availableFacilities" :key="fac" :value="fac">{{ facilityLabel(fac) }}</option>
+          <option
+            v-for="fac in availableFacilities"
+            :key="fac"
+            :value="fac"
+            :class="{ 'option-light-shade': isLightShadeFacility(fac) }"
+          >{{ facilityLabel(fac) }}</option>
         </select>
       </div>
 
@@ -163,6 +184,12 @@ function formatActivityDate(value) {
         <div class="card chart-card span-6">
           <div class="card-label">{{ t('dashboardMonthlyTitle') }}</div>
           <BarChart :items="monthlyChartData" :value-suffix="' ' + t('dashboardEntriesUnit')" />
+        </div>
+
+        <!-- Sadece "Tüm Limanlar" seçiliyken: limanları karşılaştıran grafik -->
+        <div v-if="!selectedFacility" class="card chart-card span-12">
+          <div class="card-label">{{ t('dashboardFacilityActivityTitle') }}</div>
+          <BarChart :items="facilityActivityChartData" :value-suffix="' ' + t('dashboardEntriesPerDayUnit')" />
         </div>
 
         <!-- Ek sıra: kalış süresi istatistikleri -->
@@ -262,6 +289,13 @@ function formatActivityDate(value) {
 
 .facility-select-row select option {
   color: #0b1a2b;
+  background: #ffffff;
+}
+
+/* Harita dropdown'undaki gruplamayla aynı mantık (bkz. facility.js
+   LIGHT_SHADE_FACILITIES) — burada beyaz zemin üstünde hafif gri. */
+.facility-select-row select option.option-light-shade {
+  background: #d8dde2;
 }
 
 .empty-note {
@@ -281,6 +315,7 @@ function formatActivityDate(value) {
 .span-4 { grid-column: span 4; }
 .span-6 { grid-column: span 6; }
 .span-8 { grid-column: span 8; }
+.span-12 { grid-column: span 12; }
 
 .card {
   background: rgba(255, 255, 255, 0.055);

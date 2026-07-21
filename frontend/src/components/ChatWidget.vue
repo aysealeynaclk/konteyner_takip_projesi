@@ -2,7 +2,7 @@
 import { ref, nextTick, onMounted, watch, computed } from 'vue'
 import axios from 'axios'
 import { language, t } from '../i18n'
-import { selectedFacility, availableFacilities, loadFacilities, facilityLabel, facilityLocked } from '../facility'
+import { selectedFacility, availableFacilities, loadFacilities, facilityLabel, facilityLocked, isLightShadeFacility } from '../facility'
 import AdminPanel from './AdminPanel.vue'
 
 const props = defineProps({
@@ -29,7 +29,9 @@ function formatSessionDate(value) {
   if (!value) return ''
   const parsed = new Date(value)
   if (Number.isNaN(parsed.getTime())) return value
-  return parsed.toLocaleString(language.value === 'en' ? 'en-US' : 'tr-TR')
+  return parsed.toLocaleString(language.value === 'en' ? 'en-US' : 'tr-TR', {
+    year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  })
 }
 
 function normalizeSession(session) {
@@ -225,19 +227,28 @@ watch(hasActiveChat, (locked) => {
   <div class="chat-window">
     <header class="chat-header">
       <div class="header-left">
-        <img src="/logo-icon.png" alt="logo" class="header-img" />
         <span class="header-title">{{ t('chatTitle') }}</span>
+        <template v-if="selectedFacility">
+          <span class="header-sep">/</span>
+          <select
+            v-if="!facilityLocked"
+            v-model="selectedFacility"
+            class="header-facility-select"
+          >
+            <option
+              v-for="fac in availableFacilities"
+              :key="fac"
+              :value="fac"
+              :class="{ 'option-light-shade': isLightShadeFacility(fac) }"
+            >{{ facilityLabel(fac) }}</option>
+          </select>
+          <span v-else class="header-facility-text">{{ facilityLabel(selectedFacility) }}</span>
+        </template>
       </div>
       <div class="header-actions">
-        <button class="icon-btn" :title="t('chatHistoryTitle')" @click="toggleHistory">
-          🕑
-        </button>
-        <button class="icon-btn" :title="t('chatNewChat')" @click="startNewChat">
-          ✚
-        </button>
-        <button v-if="isAdmin" class="icon-btn" :title="t('adminButtonTitle')" @click="toggleAdminPanel">
-          ➕
-        </button>
+        <button class="icon-btn" :title="t('chatHistoryTitle')" @click="toggleHistory">🕐</button>
+        <button class="icon-btn" :title="t('chatNewChat')" @click="startNewChat">+</button>
+        <button v-if="isAdmin" class="icon-btn" :title="t('adminButtonTitle')" @click="toggleAdminPanel">⚙</button>
       </div>
     </header>
 
@@ -290,19 +301,17 @@ watch(hasActiveChat, (locked) => {
       <p>{{ t('chatSelectFacilityPrompt') }}</p>
       <select v-model="selectedFacility" class="facility-select">
         <option value="" disabled selected>{{ t('chatSelectFacilityPlaceholder') }}</option>
-        <option v-for="fac in availableFacilities" :key="fac" :value="fac">{{ facilityLabel(fac) }}</option>
+        <option
+          v-for="fac in availableFacilities"
+          :key="fac"
+          :value="fac"
+          :class="{ 'option-light-shade': isLightShadeFacility(fac) }"
+        >{{ facilityLabel(fac) }}</option>
       </select>
     </div>
 
     <!-- Mesaj alanı -->
     <main v-else class="chat-area" ref="messagesContainer">
-      <div class="facility-banner">
-        <span>{{ t('chatFacilityInfo') }} <strong>{{ facilityLabel(selectedFacility) }}</strong></span>
-        <select v-if="messages.length === 0" v-model="selectedFacility" class="facility-select-inline">
-          <option v-for="fac in availableFacilities" :key="fac" :value="fac">{{ facilityLabel(fac) }}</option>
-        </select>
-      </div>
-
       <div v-if="messages.length === 0" class="hero-empty">
         <img src="/logo-icon.png" alt="logo" class="hero-icon" />
         <h2>{{ t('chatHeroTitle') }}</h2>
@@ -374,15 +383,6 @@ watch(hasActiveChat, (locked) => {
   box-sizing: border-box;
 }
 
-.header-img {
-  width: 34px;
-  height: 34px;
-  object-fit: contain;
-  border-radius: 6px;
-  background: transparent;
-  padding: 2px;
-}
-
 .chat-window {
   position: absolute;
   inset: 0;
@@ -394,20 +394,18 @@ watch(hasActiveChat, (locked) => {
 }
 
 .chat-header {
-  background: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(10px);
+  background: transparent;
   color: white;
-  padding: 0.85rem 1rem;
+  padding: 1.1rem 1.5rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.6rem;
 }
 
 .header-icon {
@@ -415,31 +413,59 @@ watch(hasActiveChat, (locked) => {
 }
 
 .header-title {
-  font-weight: 600;
-  font-size: 0.95rem;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.header-sep {
+  color: rgba(255, 255, 255, 0.35);
+  font-weight: 400;
+}
+
+.header-facility-select {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 1.05rem;
+  font-weight: 700;
+  cursor: pointer;
+  outline: none;
+  padding: 0;
+}
+
+.header-facility-select option {
+  color: #0c4a6e;
+  background: #ffffff;
+}
+
+.header-facility-select option.option-light-shade {
+  background: #d8dde2;
+}
+
+.header-facility-text {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 1.05rem;
+  font-weight: 700;
 }
 
 .header-actions {
   display: flex;
-  gap: 0.25rem;
+  gap: 1rem;
 }
 
 .icon-btn {
-  background: rgba(255, 255, 255, 0.15);
+  background: none;
   border: none;
-  color: white;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.65);
   cursor: pointer;
-  font-size: 0.85rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  font-size: 1.15rem;
+  line-height: 1;
+  padding: 0.2rem;
+  transition: color 0.15s;
 }
 
 .icon-btn:hover {
-  background: rgba(255, 255, 255, 0.28);
+  color: #22d3ee;
 }
 
 .history-panel {
@@ -461,8 +487,7 @@ watch(hasActiveChat, (locked) => {
   font-size: 0.9rem;
 }
 
-.facility-select,
-.facility-select-inline {
+.facility-select {
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 8px;
@@ -472,29 +497,13 @@ watch(hasActiveChat, (locked) => {
   outline: none;
 }
 
-.facility-select option,
-.facility-select-inline option {
+.facility-select option {
   color: #0c4a6e;
+  background: #ffffff;
 }
 
-.facility-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 10px;
-  padding: 0.5rem 0.65rem;
-  color: #e2e8f0;
-  font-size: 0.8rem;
-  margin-bottom: 0.5rem;
-}
-
-.facility-select-inline {
-  padding: 0.3rem 0.4rem;
-  font-size: 0.78rem;
-  flex-shrink: 0;
+.facility-select option.option-light-shade {
+  background: #d8dde2;
 }
 
 .history-empty {

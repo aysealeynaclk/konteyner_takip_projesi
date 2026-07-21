@@ -4,7 +4,7 @@ import axios from 'axios'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { t, countryName } from '../i18n'
-import { selectedFacility, facilityLocked, requestTab, availableFacilities, loadFacilities, facilityLabel } from '../facility'
+import { selectedFacility, facilityLocked, requestTab, availableFacilities, loadFacilities, facilityLabel, isLightShadeFacility } from '../facility'
 
 const props = defineProps({
   // Harita artık her zaman tam ekran değil, "Harita" sekmesi seçiliyken
@@ -23,6 +23,12 @@ const isLoggedIn = !!localStorage.getItem('corex_token')
 const PORT_NAME_TO_FACILITY = {
   Gebze: 'GBZ', Körfez: 'YCT', Ankara: 'ANK',
   Marsaxlokk: 'MXK', Takoradi: 'TKD', Taranto: 'TAR',
+  Oslo: 'OSL', Gävle: 'GVL', 'Stockholm Nord': 'STO',
+  Acajutla: 'AQJ', 'La Unión': 'LUX', Paita: 'PAI',
+  'Puerto Bolívar': 'PBO', 'YILPORT Quetzal': 'PRQ',
+  Liscont: 'LIS', 'Figueira Da Foz': 'FIG', Sotagus: 'SOT',
+  'Leixões': 'LEI', Aveiro: 'AVE', 'Setúbal': 'SET',
+  Tersado: 'TER', Huelva: 'HUE', Ferrol: 'FRO', Elvas: 'ELV',
 }
 
 // Ters eşleme: facility_id -> harita liman adı (dropdown'dan ülkeye odaklanmak için)
@@ -33,6 +39,10 @@ const FACILITY_TO_PORT_NAME = Object.fromEntries(
 // Ülkenin Türkçe adından o ülkenin Leaflet katmanına — dropdown'dan seçilen
 // limanın ülkesini programatik olarak "tıklamak" (odaklamak) için kullanılır.
 let countryLayerByTrName = {}
+
+// Dropdown'dan liman değişince önce dünya görünümüne dönüp sonra yeni limana
+// uçmak için (bkz. focusOnFacility) harita referansı burada da tutulur.
+let mapInstance = null
 
 const lockedNotice = ref(false)
 
@@ -49,15 +59,54 @@ function selectFacility(code) {
 
 // Dropdown'dan bir liman seçildiğinde: haritayı o ülkeye odaklar (tıklamayla
 // aynı davranış — detay paneli, zoom, hava durumu) ve limanı seçili yapar.
+// Bir ülkeden diğerine ani sıçramak yerine önce tüm dünya görünümüne dönüp
+// oradan yeni limana doğru akıcı bir geçişle gidiyor.
+// Not: burada bilerek flyTo değil setView(animate) kullanılıyor — flyTo'nun
+// "uçuş" eğrisi uzak mesafelerde zoom'u hedeften daha da aşağı düşürüp
+// (minZoom'un altına inip) harita bir an gerçek boyutunun çok altında,
+// sanki yavaş/bozuk yükleniyormuş gibi görünmesine yol açıyordu.
 function focusOnFacility(code) {
   if (!code) return
   const portName = FACILITY_TO_PORT_NAME[code]
   const countryEntry = countries.value.find(c => c.name === portName)
-  if (countryEntry) {
-    const layer = countryLayerByTrName[countryEntry.country]
-    if (layer) layer.fire('click')
-  }
+  const layer = countryEntry ? countryLayerByTrName[countryEntry.country] : null
+
   selectFacility(code)
+
+  if (!layer || !mapInstance) return
+
+  function triggerZoomIn() {
+    layer.fire('click')
+    // Animasyon zincirinin ortasında sekme odağının kaybolması gibi
+    // durumlarda Leaflet'in iç boyut/pozisyon hesabı gerçek DOM ile
+    // senkronize kalmayabiliyor (harita bir yerde "takılı" kalmış gibi
+    // görünüyor, elle sürükleyince düzeliyordu). invalidateSize bunu her
+    // seferinde zorla yeniden hesaplatıp düzeltir.
+    setTimeout(() => mapInstance.invalidateSize(), 1100)
+  }
+
+  // Harita zaten tam bu dünya görünümündeyse (örn. ilk seçim — henüz hiçbir
+  // ülkeye yakınlaşılmamışken) setView'in hedefi mevcut görünümle birebir
+  // aynı olur ve Leaflet bu durumda 'moveend' HİÇ tetiklemiyor (no-op kabul
+  // ediyor). Bu durumda "dünyaya dönüş" animasyonuna hiç gerek yok — direkt,
+  // kısa bir bekleme sonrası yeni limana geçilir (7 saniye boşuna beklenmez).
+  if (isAtWorldView(mapInstance)) {
+    setTimeout(triggerZoomIn, 700)
+    return
+  }
+
+  let triggered = false
+  function triggerOnce() {
+    if (triggered) return
+    triggered = true
+    setTimeout(triggerZoomIn, 700)
+  }
+
+  resetWorldView(mapInstance, { animate: true, duration: 6 })
+  mapInstance.once('moveend', triggerOnce)
+  // Gerçek bir hareket olduğu hâlde beklenmedik şekilde 'moveend' gelmezse
+  // diye yedek zamanlayıcı (bu artık sadece güvenlik ağı, normalde tetiklenmez).
+  setTimeout(triggerOnce, 6200)
 }
 
 const mapContainer = ref(null)
@@ -233,6 +282,36 @@ function closeDetails() {
 const MAP_CENTER = [25, 10]
 const MAP_ZOOM = 2
 
+// Dünya görünümü artık sabit bir zoom seviyesiyle değil, bu sınırların
+// container'ın gerçek genişliğine/yüksekliğine göre otomatik sığdırılmasıyla
+// (fitBounds) hesaplanıyor — sabit zoom, geniş ekranlarda dünyayı olduğundan
+// küçük (ortada, etrafı boş mavi) gösteriyordu.
+const WORLD_BOUNDS = [[-58, -180], [78, 180]]
+
+// map.fitBounds(WORLD_BOUNDS) kullanmak yerine bilerek getBoundsZoom+setView
+// birleşimi kullanılıyor: WORLD_BOUNDS tam -180/180 boylamını kapsadığı için
+// fitBounds'un kendi merkez hesabı, worldCopyJump ile birleşince haritayı
+// bazen çok uzak bir "tekrar kopyasına" kaydırıp orada bırakabiliyordu
+// (harita sola/sağa kayıp geri gelmiyordu). Burada zoom seviyesi bounds'tan
+// hesaplanır ama merkez her zaman sabit, bilinen MAP_CENTER'a ayarlanır.
+function resetWorldView(map, options) {
+  const zoom = map.getBoundsZoom(WORLD_BOUNDS)
+  map.setView(MAP_CENTER, zoom, options)
+}
+
+// Harita şu an zaten (aşağı yukarı) dünya görünümünde mi? Öyleyse
+// resetWorldView'in setView çağrısı no-op olur ve 'moveend' hiç
+// tetiklenmez — bu kontrol, o durumda boşuna beklememek için kullanılır.
+function isAtWorldView(map) {
+  const targetZoom = map.getBoundsZoom(WORLD_BOUNDS)
+  const center = map.getCenter()
+  return (
+    Math.abs(center.lat - MAP_CENTER[0]) < 0.5 &&
+    Math.abs(center.lng - MAP_CENTER[1]) < 0.5 &&
+    Math.abs(map.getZoom() - targetZoom) < 0.1
+  )
+}
+
 onMounted(async () => {
   console.log('OceanMap: harita başlatılıyor...')
   loadFacilities()
@@ -249,13 +328,14 @@ onMounted(async () => {
     // maxBounds hiç kullanılmıyor; dikey sınır aşağıda 'moveend' olayıyla elle
     // uygulanıyor (worldCopyJump'ın yatay mantığına hiç dokunmadan).
   })
+  mapInstance = map
 
   L.control.zoom({ position: 'bottomleft' }).addTo(map)
 
   // Dikeyde kutupların ötesine sonsuz kaydırılmasını engeller — maxBounds
   // yerine elle: enlem sınırı aşılırsa sadece enlemi geri çeker, boylama
   // (worldCopyJump'ın yönettiği eksene) dokunmaz.
-  const MAX_LAT = 82
+  const MAX_LAT = 60
   map.on('moveend', () => {
     const center = map.getCenter()
     if (center.lat > MAX_LAT || center.lat < -MAX_LAT) {
@@ -279,7 +359,7 @@ onMounted(async () => {
     setTimeout(() => {
       map.invalidateSize()
       if (!hasFixedInitialView) {
-        map.setView(MAP_CENTER, MAP_ZOOM)
+        resetWorldView(map, { animate: false })
         hasFixedInitialView = true
       }
     }, 50)
@@ -296,6 +376,13 @@ onMounted(async () => {
     function isLargeFeature(feature) {
       if (!feature || !feature.geometry) return false
       try {
+        // Limanı olan ülkeler (örn. Malta/Marsaxlokk) çok küçük olsa da
+        // haritada kalmalı — yoksa dropdown'dan seçilince odaklanacak bir
+        // katman bulunamıyor.
+        const trName = getTurkishNameForFeature(feature)
+        const hasPort = countries.value.some(c => c.has_port && normalize(c.country) === normalize(trName))
+        if (hasPort) return true
+
         const tmp = L.geoJSON(feature)
         const b = tmp.getBounds()
         const latSpan = Math.abs(b.getNorth() - b.getSouth())
@@ -394,7 +481,7 @@ onMounted(async () => {
           // Zoom to country bounds with padding
           try {
             const b = layer.getBounds()
-            if (b.isValid()) map.fitBounds(b.pad(0.2), { padding: [20, 20], maxZoom: 6 })
+            if (b.isValid()) map.fitBounds(b.pad(0.2), { padding: [20, 20], maxZoom: 6, animate: true, duration: 1 })
           } catch (e) {
             console.warn('Zoom to bounds failed', e)
           }
@@ -436,7 +523,12 @@ onMounted(async () => {
     <div class="port-dropdown">
       <select :value="selectedFacility || ''" @change="focusOnFacility($event.target.value)">
         <option value="">{{ t('mapSelectPort') }}</option>
-        <option v-for="fac in availableFacilities" :key="fac" :value="fac">{{ facilityLabel(fac) }}</option>
+        <option
+          v-for="fac in availableFacilities"
+          :key="fac"
+          :value="fac"
+          :class="{ 'option-light-shade': isLightShadeFacility(fac) }"
+        >{{ facilityLabel(fac) }}</option>
       </select>
     </div>
 
@@ -514,6 +606,15 @@ onMounted(async () => {
 </style>
 
 <style>
+/* Leaflet'in animasyonlu zoom/pan hareketi varsayılan olarak ease-out
+   (cubic-bezier(0,0,0.25,1)) kullanıyor — anında tam hızda başlayıp sona
+   doğru yavaşlıyor, bu da sert/mekanik bir sıçrama gibi hissettiriyor.
+   Dropdown'dan liman değişiminde (bkz. focusOnFacility) daha yumuşak
+   başlayıp yumuşak biten bir his için ease-in-out'a çeviriyoruz. */
+.leaflet-zoom-anim .leaflet-zoom-animated {
+  transition-timing-function: cubic-bezier(0.45, 0, 0.2, 1) !important;
+}
+
 .leaflet-control-attribution {
   font-size: 9px !important;
   background: rgba(6, 44, 67, 0.7) !important;
@@ -560,6 +661,12 @@ onMounted(async () => {
 .port-dropdown select option {
   color: #ffffff;
   background: #0c2438;
+}
+
+/* Bazı limanlar (bkz. facility.js LIGHT_SHADE_FACILITIES) listede bir tık
+   daha açık renkle gösterilir, gruplar görsel olarak ayrışsın diye. */
+.port-dropdown select option.option-light-shade {
+  background: #1d3346;
 }
 
 .details-panel {

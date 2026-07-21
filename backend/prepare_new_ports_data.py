@@ -1,9 +1,10 @@
 """
-COREX_Marsaxlokk_Data.csv, COREX_Takoradi_Data.csv, COREX_Taranto_Data.csv —
-Ankara verisiyle aynı formatta (ayrı DateEnteredYard sütunu, TimeExitedYard'da
-sadece saat var). Bu script her dosya için tarih+saat birleştirmesini yapıp
-(gece yarısı sarkması dahil) import_excel.py'nin okuyabileceği bir Excel
-dosyasına yazar.
+COREX_Marsaxlokk_Data.csv, COREX_Takoradi_Data.csv, COREX_Taranto_Data.csv,
+COREX_Oslo_Data.xlsx, COREX_Gavle_Data.xlsx, COREX_Stockholm_Nord_Data.xlsx —
+hepsi Ankara verisiyle aynı formatta (ayrı DateEnteredYard sütunu,
+TimeExitedYard'da sadece saat var). Bu script her dosya için tarih+saat
+birleştirmesini yapıp (gece yarısı sarkması dahil) import_excel.py'nin
+okuyabileceği bir Excel dosyasına yazar. Kaynak CSV veya Excel olabilir.
 """
 
 import pandas as pd
@@ -16,6 +17,24 @@ FILES = [
     ("COREX_Marsaxlokk_Data.csv", "marsaxlokk_prepared.xlsx"),
     ("COREX_Takoradi_Data.csv", "takoradi_prepared.xlsx"),
     ("COREX_Taranto_Data.csv", "taranto_prepared.xlsx"),
+    ("COREX_Oslo_Data.xlsx", "oslo_prepared.xlsx"),
+    ("COREX_Gavle_Data.xlsx", "gavle_prepared.xlsx"),
+    ("COREX_Stockholm_Nord_Data.xlsx", "stockholm_nord_prepared.xlsx"),
+    ("COREX_Acajutla_Data.xlsx", "acajutla_prepared.xlsx"),
+    ("COREX_La_Union_Data.xlsx", "la_union_prepared.xlsx"),
+    ("COREX_Paita_Peru_Data.xlsx", "paita_prepared.xlsx"),
+    ("COREX_Puerto_Bolivar_Ecuador_Data.xlsx", "puerto_bolivar_prepared.xlsx"),
+    ("COREX_Puerto_Quetzal_Data.xlsx", "puerto_quetzal_prepared.xlsx"),
+    ("COREX_Liscont_Portugal_Data.xlsx", "liscont_prepared.xlsx"),
+    ("COREX_Figueira_Da_Foz_Portugal_Data.xlsx", "figueira_da_foz_prepared.xlsx"),
+    ("COREX_Sotagus_Portugal_Data.xlsx", "sotagus_prepared.xlsx"),
+    ("COREX_Leixoes_Portugal_Data.xlsx", "leixoes_prepared.xlsx"),
+    ("COREX_Aveiro_Portugal_Data.xlsx", "aveiro_prepared.xlsx"),
+    ("COREX_Setubal_Portugal_Data.xlsx", "setubal_prepared.xlsx"),
+    ("COREX_Tersado_Portugal_Data.xlsx", "tersado_prepared.xlsx"),
+    ("COREX_Huelva_Spain_Data.xlsx", "huelva_prepared.xlsx"),
+    ("COREX_Ferrol_Spain_Data.xlsx", "ferrol_prepared.xlsx"),
+    ("COREX_Elvas_Portugal_Data.xlsx", "elvas_prepared.xlsx"),
 ]
 
 
@@ -39,7 +58,7 @@ def prepare_one(src_name, out_name):
     src_path = DATASETS_DIR / src_name
     out_path = DATASETS_DIR / out_name
 
-    df = pd.read_csv(src_path)
+    df = pd.read_csv(src_path) if src_path.suffix.lower() == ".csv" else pd.read_excel(src_path)
     df = df.loc[:, ~df.columns.str.startswith("Unnamed")]
 
     entered_ts = []

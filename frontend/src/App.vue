@@ -6,7 +6,7 @@ import LoginView from './components/LoginView.vue'
 import DashboardPanel from './components/DashboardPanel.vue'
 import TopNav from './components/TopNav.vue'
 import { t } from './i18n'
-import { tabRequested } from './facility'
+import { tabRequested, selectedFacility } from './facility'
 
 // Aktif sekme: 'dashboard' | 'map' | 'chat'. Giriş/misafir seçimi yapılınca
 // varsayılan olarak Dashboard açılır (iş verenin isteği).
@@ -71,6 +71,10 @@ function handleLogout() {
   currentUsername.value = ''
   isAdmin.value = false
   activeTab.value = 'dashboard'
+  // selectedFacility modül seviyesinde tek bir ref — çıkış yapılınca
+  // sıfırlanmazsa bir sonraki oturumda (misafir ya da başka kullanıcı)
+  // önceki kullanıcının seçtiği liman hâlâ seçili görünüyordu.
+  selectedFacility.value = null
 }
 </script>
 

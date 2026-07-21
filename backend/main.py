@@ -45,10 +45,11 @@ ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 8
 
 
-def create_token(username: str, user_id: int, is_admin: bool):
+def create_token(username: str, user_id: int, is_admin: bool, display_name: str = None):
     payload = {
         "uid": user_id,
         "sub": username,
+        "name": display_name or username,
         "is_admin": is_admin,
         "exp": datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS),
     }
@@ -126,7 +127,7 @@ def login(request: LoginRequest):
     if not password_valid:
         raise HTTPException(status_code=401, detail="Kullanıcı adı veya şifre hatalı.")
 
-    token = create_token(user["username"], int(user["id"]), bool(user["is_admin"]))
+    token = create_token(user["username"], int(user["id"]), bool(user["is_admin"]), user["display_name"])
     return {
         "token": token,
         "username": user["username"],
@@ -595,6 +596,10 @@ def api_dashboard_analytics(facility_id: Optional[str] = None, period: str = "we
         "dwell_time_stats": get_dwell_time_stats(facility_id),
         "status_with_trend": get_status_with_trend(facility_id),
         "period_comparison": compare_recent_periods(facility_id, period),
+        # Sadece 'Tüm Limanlar' görünümünde (facility_id yokken) anlamlı;
+        # limanları karşılaştıran ek grafik için — hesaplaması ucuz olduğu
+        # için filtre ne olursa olsun her zaman dönülür.
+        "facility_activity": get_facility_activity_breakdown(),
     }
 
 
@@ -754,6 +759,10 @@ yorumlayıp doğal Türkçe'ye çevirerek anlat:
   ve açık uçlu bir şey sorarsa, o zaman fonksiyonun döndürdüğü ilgili tüm
   alanları anlat.
 - Tarih/saatleri okunaklı yaz (örn. "5 Temmuz 2026, saat 14:32")
+- ASLA markdown biçimlendirmesi kullanma — yıldız (**kalın**, *italik*), alt
+  çizgi, # başlık gibi işaretler ASLA yazma. Cevap ekranda düz metin olarak
+  gösteriliyor, bu işaretler render edilmiyor, olduğu gibi (yıldızlarla)
+  görünüyor. Sadece düz cümleler yaz, gerekirse "-" ile normal liste yap.
 - Veritabanı sütun adlarını (örn. "time_entered_yard", "loc_name") ham haliyle
   asla gösterme, kodları (ReceiveExport, FCL, vb.) da olduğu gibi tekrarlama —
   yukarıdaki açıklamalara göre doğal Türkçe'ye çevir
@@ -821,6 +830,10 @@ Wording rules:
   If the user asks something open-ended like "give me all the details" /
   "tell me its full status", then explain all the relevant fields returned.
 - Write dates/times in a readable way (e.g. "July 5, 2026 at 2:32 PM")
+- NEVER use markdown formatting — no asterisks (**bold**, *italic*), underscores,
+  or # headings. The reply is displayed as plain text, so these marks are NOT
+  rendered and show up literally as asterisks. Write plain sentences only; use
+  "-" for a simple list if needed.
 - Never show raw database column names (e.g. "time_entered_yard", "loc_name"),
   and don't repeat raw codes (ReceiveExport, FCL, etc.) verbatim either —
   translate them into natural English per the explanations above
@@ -1287,6 +1300,36 @@ def get_status_with_trend(facility_id: Optional[str] = None):
     }
 
 
+def get_facility_activity_breakdown():
+    """Her limanın günlük ortalama giriş sayısı ve şu an sahada kaç konteyner
+    olduğu — dashboard'da 'Tüm Limanlar' seçiliyken limanları birbiriyle
+    karşılaştıran grafikte kullanılır. Toplam yerine günlük ortalama
+    kullanılıyor ki limanların verideki gün sayısı farklı olsa da adil
+    karşılaştırılabilsinler (bkz. get_status_with_trend'deki aynı mantık)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT
+            facility_id,
+            COUNT(*) * 1.0 / COUNT(DISTINCT date(time_entered_yard)) as avg_entries_per_day,
+            SUM(CASE WHEN time_exited_yard IS NULL THEN 1 ELSE 0 END) as current_in_yard
+        FROM gate_transactions
+        WHERE transaction_status != 'CANCEL' AND facility_id IS NOT NULL AND time_entered_yard IS NOT NULL
+        GROUP BY facility_id
+    """)
+    by_facility = {row["facility_id"]: dict(row) for row in cursor.fetchall()}
+    conn.close()
+
+    return [
+        {
+            "facility_id": fid,
+            "avg_entries_per_day": round(by_facility[fid]["avg_entries_per_day"], 1),
+            "current_in_yard": by_facility[fid]["current_in_yard"],
+        }
+        for fid in list_known_facilities() if fid in by_facility
+    ]
+
+
 # ---------------------------------------------------------
 # ADMIN: yeni konteyner kaydı ekleme / kayıt arama / kapatma / iptal etme
 # Admin veri SİLEMEZ, sadece yeni kayıt ekleyebilir, açık bir kaydın çıkışını
@@ -1308,15 +1351,72 @@ _ADMIN_COLUMNS = """
 """
 
 
+# Dropdown'larda (admin panel, chatbot, dashboard, harita) gösterilecek liman
+# sırası — kullanıcının belirlediği sabit sıra. Henüz verisi olmayan bir kod
+# buradan eksikse listenin sonuna alfabetik olarak eklenir (bkz. aşağıdaki
+# list_known_facilities), yani yeni bir liman eklenip bu listeye henüz
+# işlenmemişse dropdown'dan hiç kaybolmaz.
+FACILITY_DISPLAY_ORDER = [
+    "GBZ", "YCT", "ANK",             # Türkiye
+    "OSL", "GVL", "STO",             # Norveç / İsveç
+    # (henüz eklenmemiş ~10 liman burada, bu 6'dan sonra yer alacak)
+    "LIS", "FIG", "SOT", "LEI", "AVE", "SET", "TER",  # Portekiz
+    "HUE", "FRO",                     # İspanya
+    "ELV",                            # Portekiz
+    "PBO", "PAI", "PRQ", "AQJ", "LUX",  # Ekvador / Peru / Guatemala / El Salvador
+    "MXK", "TAR", "TKD",             # Malta / İtalya / Gana
+]
+
+
 def list_known_facilities():
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT DISTINCT facility_id FROM gate_transactions WHERE facility_id IS NOT NULL ORDER BY facility_id"
+        "SELECT DISTINCT facility_id FROM gate_transactions WHERE facility_id IS NOT NULL"
     )
-    facilities = [row["facility_id"] for row in cursor.fetchall()]
+    facilities = {row["facility_id"] for row in cursor.fetchall()}
     conn.close()
-    return facilities
+    ordered = [f for f in FACILITY_DISPLAY_ORDER if f in facilities]
+    remaining = sorted(facilities.difference(ordered))
+    return ordered + remaining
+
+
+# Frontend'deki facility.js FACILITY_LABELS ile aynı isimler — chatbot'un
+# sistem promptuna "şu an hangi liman aktif" bilgisini vermek için kullanılır
+# (bkz. chat() içindeki facility_hint), yoksa LLM'in bunu bilecek hiçbir yolu yok.
+FACILITY_NAMES = {
+    "GBZ": "Gebze Terminali",
+    "YCT": "Körfez Terminali",
+    "ANK": "Ankara Terminali",
+    "MXK": "Marsaxlokk Terminali",
+    "TKD": "Takoradi Terminali",
+    "TAR": "Taranto Terminali",
+    "OSL": "Oslo Terminali",
+    "GVL": "Gävle Terminali",
+    "STO": "Stockholm Nord Terminali",
+    "AQJ": "Acajutla Terminali",
+    "LUX": "La Unión Terminali",
+    "PAI": "Paita Terminali",
+    "PBO": "Puerto Bolívar Terminali",
+    "PRQ": "Puerto Quetzal Terminali",
+    "LIS": "Liscont Terminali",
+    "FIG": "Figueira Da Foz Terminali",
+    "SOT": "Sotagus Terminali",
+    "LEI": "Leixões Terminali",
+    "AVE": "Aveiro Terminali",
+    "SET": "Setúbal Terminali",
+    "TER": "Tersado Terminali",
+    "HUE": "Huelva Terminali",
+    "FRO": "Ferrol Terminali",
+    "ELV": "Elvas Terminali",
+}
+
+
+def facility_label(code: Optional[str]) -> str:
+    if not code:
+        return ""
+    name = FACILITY_NAMES.get(code)
+    return f"{name} ({code})" if name else code
 
 
 # Saha konumu (loc_name) seçici için: geçmiş verideki gerçek plaka/blok/adres
@@ -1605,8 +1705,31 @@ def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
     # Burada current_user doğrulanmış token payload'ını içerir.
     try:
         chat_user = resolve_chat_user(current_user)
+        display_name = current_user.get("name") or chat_user["username"]
         system_instruction = SYSTEM_INSTRUCTION_EN if request.language == "en" else SYSTEM_INSTRUCTION
-        messages = [{"role": "system", "content": system_instruction}]
+        name_hint = (
+            f"\n\nKullanıcının adı: {display_name}. Sohbete uygun anlarda (örn. selamlaşma, "
+            f"genel sohbet) kullanıcıya adıyla hitap edebilirsin, ama her cümlede zorlama."
+            if request.language != "en"
+            else f"\n\nThe user's name is {display_name}. You may address them by name where "
+            f"it fits naturally (e.g. greetings, casual conversation), but don't force it into every sentence."
+        )
+        # facility_id sadece tool fonksiyonlarına parametre olarak gidiyor —
+        # LLM'in kendisi bunu hiç görmüyordu, o yüzden "hangi liman?" gibi
+        # sorulara cevap veremiyordu. Burada açıkça bildiriliyor.
+        facility_hint = ""
+        if request.facility_id:
+            label = facility_label(request.facility_id)
+            facility_hint = (
+                f"\n\nŞu anda seçili/görüntülenen liman: {label}. Kullanıcı 'hangi liman', "
+                f"'neredeyim', 'bu liman neresi' gibi sorular sorarsa bu bilgiyi doğrudan "
+                f"kullan; tüm araç (tool) sonuçları da bu limana ait."
+                if request.language != "en"
+                else f"\n\nThe currently selected/viewed facility is: {label}. If the user asks "
+                f"'which facility', 'where am I', or similar, use this directly; all tool "
+                f"results also belong to this facility."
+            )
+        messages = [{"role": "system", "content": system_instruction + name_hint + facility_hint}]
 
         # Önceki sohbet geçmişini ekle (hafıza için)
         for msg in request.history or []:
