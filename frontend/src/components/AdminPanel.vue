@@ -519,7 +519,7 @@ async function cancelRecord(record) {
       <template v-if="searchFacilityId">
         <div class="search-row">
           <div class="input-with-icon">
-            <input v-model="searchQuery" type="text" :placeholder="t('adminSearchPlaceholder')" @keydown.enter="runSearch" />
+            <input v-model="searchQuery" type="text" :placeholder="t('adminSearchPlaceholder')" maxlength="11" @keydown.enter="runSearch" />
             <span
               v-if="searchContainerNoStatus"
               class="validity-icon"

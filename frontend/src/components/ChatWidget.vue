@@ -246,9 +246,15 @@ watch(hasActiveChat, (locked) => {
         </template>
       </div>
       <div class="header-actions">
-        <button class="icon-btn" :title="t('chatHistoryTitle')" @click="toggleHistory">🕐</button>
-        <button class="icon-btn" :title="t('chatNewChat')" @click="startNewChat">+</button>
-        <button v-if="isAdmin" class="icon-btn" :title="t('adminButtonTitle')" @click="toggleAdminPanel">⚙</button>
+        <button class="header-action-btn" @click="toggleHistory">
+          <span class="action-icon">↺</span>{{ t('chatHistoryTitle') }}
+        </button>
+        <button class="header-action-btn primary" @click="startNewChat">
+          <span class="action-icon">+</span>{{ t('chatNewChat') }}
+        </button>
+        <button v-if="isAdmin" class="header-action-btn" @click="toggleAdminPanel">
+          <span class="action-icon">⚙</span>{{ t('adminButtonTitle') }}
+        </button>
       </div>
     </header>
 
@@ -313,7 +319,9 @@ watch(hasActiveChat, (locked) => {
     <!-- Mesaj alanı -->
     <main v-else class="chat-area" ref="messagesContainer">
       <div v-if="messages.length === 0" class="hero-empty">
-        <img src="/logo-icon.png" alt="logo" class="hero-icon" />
+        <div class="hero-icon-badge">
+          <img src="/logo-icon.png" alt="logo" class="hero-icon" />
+        </div>
         <h2>{{ t('chatHeroTitle') }}</h2>
         <p>{{ t('chatHeroSubtitle') }}</p>
 
@@ -329,13 +337,13 @@ watch(hasActiveChat, (locked) => {
 
         <div class="hero-suggestions">
           <button class="suggestion-chip" @click="askSuggestion(t('chatSuggestion1'))">
-            📦 {{ t('chatSuggestion1') }}
+            {{ t('chatSuggestion1') }}
           </button>
           <button class="suggestion-chip" @click="askSuggestion(t('chatSuggestion2'))">
-            ⏱️ {{ t('chatSuggestion2') }}
+            {{ t('chatSuggestion2') }}
           </button>
           <button class="suggestion-chip" @click="askSuggestion(t('chatSuggestion3'))">
-            🚢 {{ t('chatSuggestion3') }}
+            {{ t('chatSuggestion3') }}
           </button>
         </div>
       </div>
@@ -423,6 +431,7 @@ watch(hasActiveChat, (locked) => {
 }
 
 .header-facility-select {
+  color-scheme: dark;
   background: none;
   border: none;
   color: rgba(255, 255, 255, 0.75);
@@ -431,15 +440,32 @@ watch(hasActiveChat, (locked) => {
   cursor: pointer;
   outline: none;
   padding: 0;
+  scrollbar-width: thin;
+  scrollbar-color: #2c5f85 #0c2438;
+}
+
+.header-facility-select::-webkit-scrollbar {
+  width: 10px;
+}
+.header-facility-select::-webkit-scrollbar-track {
+  background: #0c2438;
+}
+.header-facility-select::-webkit-scrollbar-thumb {
+  background: #2c5f85;
+  border-radius: 6px;
+  border: 2px solid #0c2438;
+}
+.header-facility-select::-webkit-scrollbar-thumb:hover {
+  background: #4a86ad;
 }
 
 .header-facility-select option {
-  color: #0c4a6e;
-  background: #ffffff;
+  color: #ffffff;
+  background: #0c2438;
 }
 
 .header-facility-select option.option-light-shade {
-  background: #d8dde2;
+  background: #1d3346;
 }
 
 .header-facility-text {
@@ -450,22 +476,43 @@ watch(hasActiveChat, (locked) => {
 
 .header-actions {
   display: flex;
-  gap: 1rem;
+  gap: 0.6rem;
 }
 
-.icon-btn {
-  background: none;
-  border: none;
-  color: rgba(255, 255, 255, 0.65);
+.header-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(111, 168, 208, 0.3);
+  border-radius: 999px;
+  color: #cfe2f2;
   cursor: pointer;
-  font-size: 1.15rem;
+  font-size: 0.85rem;
+  font-weight: 600;
   line-height: 1;
-  padding: 0.2rem;
-  transition: color 0.15s;
+  padding: 0.5rem 0.9rem;
+  transition: background 0.15s, border-color 0.15s;
 }
 
-.icon-btn:hover {
-  color: #22d3ee;
+.header-action-btn:hover {
+  background: rgba(111, 168, 208, 0.15);
+  border-color: rgba(111, 168, 208, 0.55);
+}
+
+.header-action-btn.primary {
+  background: #2c5f85;
+  border-color: #4a86ad;
+  color: white;
+}
+
+.header-action-btn.primary:hover {
+  background: #366f99;
+}
+
+.action-icon {
+  font-size: 1rem;
+  line-height: 1;
 }
 
 .history-panel {
@@ -488,22 +535,40 @@ watch(hasActiveChat, (locked) => {
 }
 
 .facility-select {
+  color-scheme: dark;
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 8px;
+  border-radius: 14px;
   color: white;
   font-size: 0.85rem;
   padding: 0.45rem 0.6rem;
   outline: none;
+  scrollbar-width: thin;
+  scrollbar-color: #2c5f85 #0c2438;
+}
+
+.facility-select::-webkit-scrollbar {
+  width: 10px;
+}
+.facility-select::-webkit-scrollbar-track {
+  background: #0c2438;
+}
+.facility-select::-webkit-scrollbar-thumb {
+  background: #2c5f85;
+  border-radius: 6px;
+  border: 2px solid #0c2438;
+}
+.facility-select::-webkit-scrollbar-thumb:hover {
+  background: #4a86ad;
 }
 
 .facility-select option {
-  color: #0c4a6e;
-  background: #ffffff;
+  color: #ffffff;
+  background: #0c2438;
 }
 
 .facility-select option.option-light-shade {
-  background: #d8dde2;
+  background: #1d3346;
 }
 
 .history-empty {
@@ -614,32 +679,45 @@ watch(hasActiveChat, (locked) => {
   padding: 2rem 1rem;
 }
 
+.hero-icon-badge {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: #12324c;
+  border: 1px solid rgba(111, 168, 208, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 0.9rem;
+}
+
 .hero-icon {
-  width: 56px;
-  height: 56px;
+  width: 75px;
+  height: 75px;
   object-fit: contain;
-  margin-bottom: 0.5rem;
 }
 
 .hero-empty h2 {
   margin: 0;
-  font-size: 1.4rem;
+  font-size: 1.65rem;
+  font-weight: 700;
   color: white;
 }
 
 .hero-empty p {
-  margin: 0 0 1.25rem;
-  color: rgba(255, 255, 255, 0.55);
+  margin: 0.35rem 0 1.75rem;
+  color: #7d9cbd;
   font-size: 0.92rem;
 }
 
 .hero-input-row {
   width: 100%;
   display: flex;
+  align-items: center;
   gap: 0.6rem;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 16px;
+  background: #0e2c46;
+  border: 1px solid rgba(111, 168, 208, 0.25);
+  border-radius: 14px;
   padding: 0.5rem 0.6rem 0.5rem 1.1rem;
 }
 
@@ -656,20 +734,28 @@ watch(hasActiveChat, (locked) => {
 }
 
 .hero-input-row textarea::placeholder {
-  color: rgba(255, 255, 255, 0.4);
+  color: #5c7d9c;
 }
 
 .hero-input-row .send-btn {
   flex-shrink: 0;
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  color: #7fb3e0;
   padding: 0;
   font-size: 1.1rem;
   display: flex;
   align-items: center;
   justify-content: center;
   align-self: center;
+  transition: background 0.15s;
+}
+
+.hero-input-row .send-btn:hover:not(:disabled) {
+  background: rgba(111, 168, 208, 0.15);
 }
 
 .hero-suggestions {
@@ -681,21 +767,20 @@ watch(hasActiveChat, (locked) => {
 }
 
 .suggestion-chip {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.8);
-  padding: 0.75rem 1rem;
-  border-radius: 12px;
-  font-size: 0.82rem;
+  background: #0e2c46;
+  border: 1px solid rgba(111, 168, 208, 0.3);
+  color: #cfe2f2;
+  padding: 0.7rem 1.2rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
   cursor: pointer;
-  text-align: left;
-  max-width: 200px;
+  text-align: center;
   transition: background 0.15s, border-color 0.15s;
 }
 
 .suggestion-chip:hover {
-  background: rgba(255, 255, 255, 0.09);
-  border-color: rgba(34, 211, 238, 0.35);
+  background: #12324c;
+  border-color: rgba(111, 168, 208, 0.55);
 }
 
 .message-row {

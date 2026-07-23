@@ -20,13 +20,13 @@ const emit = defineEmits(['change-tab', 'logout'])
 
     <div class="nav-tabs">
       <button :class="{ active: activeTab === 'dashboard' }" @click="emit('change-tab', 'dashboard')">
-        📊 {{ t('navDashboard') }}
+        {{ t('navDashboard') }}
       </button>
       <button :class="{ active: activeTab === 'map' }" @click="emit('change-tab', 'map')">
-        🗺️ {{ t('navMap') }}
+        {{ t('navMap') }}
       </button>
       <button :class="{ active: activeTab === 'chat' }" @click="emit('change-tab', 'chat')">
-        💬 {{ t('navChat') }} <span v-if="!isAuthenticated" class="lock-icon">🔒</span>
+        {{ t('navChat') }}
       </button>
     </div>
 
@@ -109,10 +109,6 @@ const emit = defineEmits(['change-tab', 'logout'])
   border: 1px solid rgba(34, 211, 238, 0.4);
 }
 
-.lock-icon {
-  font-size: 0.75rem;
-  opacity: 0.8;
-}
 
 .nav-right {
   display: flex;

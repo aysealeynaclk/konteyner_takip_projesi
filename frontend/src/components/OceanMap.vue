@@ -44,6 +44,14 @@ let countryLayerByTrName = {}
 // uçmak için (bkz. focusOnFacility) harita referansı burada da tutulur.
 let mapInstance = null
 
+// Art arda hızlı liman seçilirse önceki focusOnFacility çağrısının bekleyen
+// moveend/timeout'ları hâlâ tetiklenip (eski limanın layer'ını 'click'leyip)
+// haritayı yanlış limana geri sürükleyebiliyordu (örn. 3. seçilince aslında
+// 2.'nin gecikmiş adımı devreye girip harita 2-3 arasında gidip geliyordu).
+// Her çağrı kendi sıra numarasını alır, sadece EN SON çağrı gerçek zoom'u
+// tetikler; eskiyenler sessizce no-op olur.
+let focusRequestId = 0
+
 const lockedNotice = ref(false)
 
 function selectFacility(code) {
@@ -59,12 +67,11 @@ function selectFacility(code) {
 
 // Dropdown'dan bir liman seçildiğinde: haritayı o ülkeye odaklar (tıklamayla
 // aynı davranış — detay paneli, zoom, hava durumu) ve limanı seçili yapar.
-// Bir ülkeden diğerine ani sıçramak yerine önce tüm dünya görünümüne dönüp
-// oradan yeni limana doğru akıcı bir geçişle gidiyor.
-// Not: burada bilerek flyTo değil setView(animate) kullanılıyor — flyTo'nun
-// "uçuş" eğrisi uzak mesafelerde zoom'u hedeften daha da aşağı düşürüp
-// (minZoom'un altına inip) harita bir an gerçek boyutunun çok altında,
-// sanki yavaş/bozuk yükleniyormuş gibi görünmesine yol açıyordu.
+// Önceki sürümde önce dünya görünümüne dönüp oradan yeni limana gidiyordu;
+// bu hem geçişi (10+ saniye) gereksiz uzatıyordu hem de art arda hızlı
+// seçimlerde önceki isteğin gecikmiş adımları yeni seçimin üstüne biniyordu.
+// Şimdi tek adımda, mevcut konumdan doğrudan hedef ülkeye akıcı bir
+// fitBounds animasyonuyla gidiliyor — süre her zaman aynı ve öngörülebilir.
 function focusOnFacility(code) {
   if (!code) return
   const portName = FACILITY_TO_PORT_NAME[code]
@@ -75,38 +82,19 @@ function focusOnFacility(code) {
 
   if (!layer || !mapInstance) return
 
-  function triggerZoomIn() {
+  // Art arda hızlı liman seçilirse sadece EN SON istek gerçekten çalışsın.
+  const myRequestId = ++focusRequestId
+
+  setTimeout(() => {
+    if (myRequestId !== focusRequestId) return
     layer.fire('click')
     // Animasyon zincirinin ortasında sekme odağının kaybolması gibi
     // durumlarda Leaflet'in iç boyut/pozisyon hesabı gerçek DOM ile
     // senkronize kalmayabiliyor (harita bir yerde "takılı" kalmış gibi
     // görünüyor, elle sürükleyince düzeliyordu). invalidateSize bunu her
     // seferinde zorla yeniden hesaplatıp düzeltir.
-    setTimeout(() => mapInstance.invalidateSize(), 1100)
-  }
-
-  // Harita zaten tam bu dünya görünümündeyse (örn. ilk seçim — henüz hiçbir
-  // ülkeye yakınlaşılmamışken) setView'in hedefi mevcut görünümle birebir
-  // aynı olur ve Leaflet bu durumda 'moveend' HİÇ tetiklemiyor (no-op kabul
-  // ediyor). Bu durumda "dünyaya dönüş" animasyonuna hiç gerek yok — direkt,
-  // kısa bir bekleme sonrası yeni limana geçilir (7 saniye boşuna beklenmez).
-  if (isAtWorldView(mapInstance)) {
-    setTimeout(triggerZoomIn, 700)
-    return
-  }
-
-  let triggered = false
-  function triggerOnce() {
-    if (triggered) return
-    triggered = true
-    setTimeout(triggerZoomIn, 700)
-  }
-
-  resetWorldView(mapInstance, { animate: true, duration: 6 })
-  mapInstance.once('moveend', triggerOnce)
-  // Gerçek bir hareket olduğu hâlde beklenmedik şekilde 'moveend' gelmezse
-  // diye yedek zamanlayıcı (bu artık sadece güvenlik ağı, normalde tetiklenmez).
-  setTimeout(triggerOnce, 6200)
+    setTimeout(() => mapInstance.invalidateSize(), 2400)
+  }, 50)
 }
 
 const mapContainer = ref(null)
@@ -299,19 +287,6 @@ function resetWorldView(map, options) {
   map.setView(MAP_CENTER, zoom, options)
 }
 
-// Harita şu an zaten (aşağı yukarı) dünya görünümünde mi? Öyleyse
-// resetWorldView'in setView çağrısı no-op olur ve 'moveend' hiç
-// tetiklenmez — bu kontrol, o durumda boşuna beklememek için kullanılır.
-function isAtWorldView(map) {
-  const targetZoom = map.getBoundsZoom(WORLD_BOUNDS)
-  const center = map.getCenter()
-  return (
-    Math.abs(center.lat - MAP_CENTER[0]) < 0.5 &&
-    Math.abs(center.lng - MAP_CENTER[1]) < 0.5 &&
-    Math.abs(map.getZoom() - targetZoom) < 0.1
-  )
-}
-
 onMounted(async () => {
   console.log('OceanMap: harita başlatılıyor...')
   loadFacilities()
@@ -481,7 +456,7 @@ onMounted(async () => {
           // Zoom to country bounds with padding
           try {
             const b = layer.getBounds()
-            if (b.isValid()) map.fitBounds(b.pad(0.2), { padding: [20, 20], maxZoom: 6, animate: true, duration: 1 })
+            if (b.isValid()) map.fitBounds(b.pad(0.2), { padding: [20, 20], maxZoom: 6, animate: true, duration: 2.2 })
           } catch (e) {
             console.warn('Zoom to bounds failed', e)
           }
@@ -539,15 +514,15 @@ onMounted(async () => {
       <button class="close-btn" @click="closeDetails()">✕</button>
     </div>
     <div class="details-body">
-      <div v-if="selected.weather" class="country-weather compact" style="margin-bottom:8px;">
-        <strong style="display:block; margin-bottom:6px">{{ t('generalWeather') }}</strong>
+      <div v-if="selected.weather" class="country-weather compact">
+        <div class="weather-label">{{ t('generalWeather') }}</div>
         <div class="weather-compact-row">
           <span class="weather-icon-small">{{ weatherInfo(selected.weather.weathercode).icon }}</span>
-          <span class="weather-text">{{ weatherInfo(selected.weather.weathercode).label }} • {{ Math.round(selected.weather.temperature) }}°C</span>
+          <span class="weather-text">{{ weatherInfo(selected.weather.weathercode).label }} · {{ Math.round(selected.weather.temperature) }}°C</span>
         </div>
       </div>
       <div v-if="selected.ports.length > 0" class="has-ports">
-        <div>{{ t('hasPort') }}</div>
+        <div class="has-ports-label">{{ t('hasPort') }}</div>
         <ul v-if="selected.ports.some(p => p.name)" class="corex-list">
           <li v-for="(p, idx) in selected.ports.filter(p => p.name)" :key="idx">
             <button
@@ -556,13 +531,13 @@ onMounted(async () => {
               :class="{ active: selectedFacility === PORT_NAME_TO_FACILITY[p.name] }"
               :title="t('facilitySelectHint')"
               @click="selectFacility(PORT_NAME_TO_FACILITY[p.name])"
-            >📍 {{ p.name }} <span v-if="selectedFacility === PORT_NAME_TO_FACILITY[p.name]">✅</span></button>
-            <span v-else>📍 {{ p.name }}</span>
+            >{{ p.name }} <span v-if="selectedFacility === PORT_NAME_TO_FACILITY[p.name]" class="chip-check">✓</span></button>
+            <span v-else class="port-facility-static">{{ p.name }}</span>
           </li>
         </ul>
         <p v-if="lockedNotice" class="facility-locked-notice">{{ t('facilityLockedNotice') }}</p>
         <template v-if="selected.ports.some(p => selectedFacility === PORT_NAME_TO_FACILITY[p.name])">
-          <p v-if="isLoggedIn" class="facility-confirm">{{ t('facilitySelectedInfo') }}</p>
+          <p v-if="isLoggedIn" class="facility-confirm"><span class="facility-confirm-check">✓</span>{{ t('facilitySelectedInfo') }}</p>
           <button v-if="isLoggedIn" class="open-dashboard-btn" @click="requestTab('chat')">{{ t('openChatFromMap') }}</button>
         </template>
       </div>
@@ -649,13 +624,33 @@ onMounted(async () => {
   background: rgba(6, 44, 67, 0.9);
   color: #ffffff;
   border: 1px solid rgba(14, 165, 233, 0.3);
-  border-radius: 10px;
+  border-radius: 16px;
   padding: 0.55rem 0.8rem;
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
   outline: none;
   box-shadow: 0 8px 24px rgba(2, 6, 23, 0.35);
+  /* Firefox: açılır listenin scrollbar'ı */
+  scrollbar-width: thin;
+  scrollbar-color: #2c5f85 #0c2438;
+}
+
+/* Chrome/Edge: açılır listenin (native popup) scrollbar'ı select üstündeki
+   -webkit-scrollbar kurallarını miras alıyor, bu yüzden burada tanımlanıyor. */
+.port-dropdown select::-webkit-scrollbar {
+  width: 10px;
+}
+.port-dropdown select::-webkit-scrollbar-track {
+  background: #0c2438;
+}
+.port-dropdown select::-webkit-scrollbar-thumb {
+  background: #2c5f85;
+  border-radius: 6px;
+  border: 2px solid #0c2438;
+}
+.port-dropdown select::-webkit-scrollbar-thumb:hover {
+  background: #4a86ad;
 }
 
 .port-dropdown select option {
@@ -678,13 +673,13 @@ onMounted(async () => {
   max-width: calc(100% - 32px);
   max-height: calc(100% - 32px);
   overflow: auto;
-  background: rgba(6, 44, 67, 0.98);
+  background: #0e2c46;
   color: white;
-  border-radius: 12px;
-  padding: 12px;
+  border-radius: 16px;
+  padding: 18px 18px 16px;
   z-index: 1600; /* ensure it's above all UI */
-  border: 1px solid rgba(14,165,233,0.18);
-  box-shadow: 0 12px 36px rgba(2,6,23,0.35);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 16px 40px rgba(2, 6, 23, 0.45);
 }
 
 .country-weather-row { display:flex; gap:10px; align-items:center }
@@ -692,44 +687,88 @@ onMounted(async () => {
 .country-weather-text { line-height:1 }
 .weather-main { font-weight:600 }
 .weather-sub { opacity:0.85; font-size:0.9rem }
-.no-ports { color: rgba(255,255,255,0.75) }
+.no-ports { color: #7d9cbd }
 
-.has-ports { color: #bbf7d0; font-weight:600; margin-bottom:8px }
+.country-weather.compact { margin-bottom: 16px; }
+.weather-label { color: #7d9cbd; font-size: 0.82rem; font-weight: 500; margin-bottom: 6px; }
+
+.has-ports { margin-bottom: 4px }
+.has-ports-label { color: #7d9cbd; font-size: 0.85rem; margin-bottom: 12px; }
 
 .port-facility-link {
-  background: none;
-  border: none;
-  color: inherit;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: white;
   font: inherit;
+  font-size: 0.88rem;
+  font-weight: 500;
   cursor: pointer;
-  padding: 0;
-  text-decoration: underline dotted;
+  padding: 7px 16px;
+  border-radius: 999px;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
-.port-facility-link.active { text-decoration: none; color: #bbf7d0; }
-.facility-confirm { color: #bbf7d0; font-size: 0.85rem; margin: 6px 0 0; font-weight: 600; }
-.facility-locked-notice { color: #fca5a5; font-size: 0.85rem; margin: 6px 0 0; font-weight: 600; }
+.port-facility-link:hover { background: rgba(255, 255, 255, 0.09); }
+.port-facility-link.active {
+  background: #2c5f85;
+  border-color: #4a86ad;
+  color: white;
+  font-weight: 600;
+}
+.port-facility-static {
+  display: inline-block;
+  padding: 7px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.88rem;
+}
+.chip-check { margin-left: 4px; font-weight: 700; }
+
+.facility-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: rgba(74, 134, 173, 0.28);
+  border: 1px solid rgba(74, 134, 173, 0.4);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin: 12px 0 0;
+  color: white;
+  font-size: 0.85rem;
+  font-weight: 400;
+  line-height: 1.4;
+}
+.facility-confirm-check {
+  flex-shrink: 0;
+  font-weight: 700;
+  color: white;
+  margin-top: 1px;
+}
+.facility-locked-notice { color: #fca5a5; font-size: 0.85rem; margin: 10px 0 0; font-weight: 600; }
 
 .open-dashboard-btn {
-  margin-top: 8px;
-  background: rgba(34, 211, 238, 0.18);
-  border: 1px solid rgba(34, 211, 238, 0.4);
-  color: #e0f7fb;
-  padding: 6px 12px;
-  border-radius: 8px;
-  font-size: 0.82rem;
+  width: 100%;
+  margin-top: 12px;
+  background: #e4edf6;
+  border: none;
+  color: #0c2a42;
+  padding: 12px;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  font-weight: 700;
   cursor: pointer;
+  transition: background 0.15s ease;
 }
-.open-dashboard-btn:hover { background: rgba(34, 211, 238, 0.3); }
+.open-dashboard-btn:hover { background: #ffffff; }
 
 /* Compact weather */
 .weather-compact-row { display:flex; gap:8px; align-items:center }
-.weather-icon-small { font-size:1.05rem; line-height:1 }
+.weather-icon-small { font-size:1.1rem; line-height:1 }
 
-.corex-list { list-style:none; padding:6px; margin:0; max-height:150px; overflow:auto; display:flex; flex-wrap:wrap; gap:6px }
-.corex-list li { background: rgba(255,255,255,0.04); padding:6px 8px; border-radius:8px; font-size:0.86rem }
-.corex-list li.highlight { background: rgba(187,247,208,0.12); color: #bbf7d0; font-weight:700 }
+.corex-list { list-style:none; padding:0; margin:0; max-height:150px; overflow:auto; display:flex; flex-wrap:wrap; gap:8px }
+.corex-list li { display: contents }
 
-.weather-text { font-size:0.95rem; opacity:0.95 }
+.weather-text { font-size:0.95rem; font-weight: 600; color: white; }
 
 /* Ensure details panel stays within viewport */
 @media (max-width: 900px) {
@@ -737,7 +776,9 @@ onMounted(async () => {
   .port-dropdown { top: 10px; right: 10px; }
   .port-dropdown select { padding: 0.4rem 0.6rem; font-size: 0.78rem; }
 }
-.details-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px }
+.details-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px }
+.details-header strong { font-size: 1.15rem; font-weight: 700; }
 .details-body { font-size:0.9rem }
-.close-btn { background:none; border:none; color:white; cursor:pointer }
+.close-btn { background:none; border:none; color: rgba(255,255,255,0.55); cursor:pointer; font-size: 1rem; padding: 2px; }
+.close-btn:hover { color: white; }
 </style>

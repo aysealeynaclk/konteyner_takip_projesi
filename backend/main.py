@@ -1284,10 +1284,14 @@ def get_status_with_trend(facility_id: Optional[str] = None):
     """, params)
     today_entries = cursor.fetchone()["cnt"]
 
+    # Bugün henüz bitmediği için tam bir gün gibi sayılıp ortalamayı
+    # olduğundan düşük göstermesin diye (yarım günlük veri tam günmüş gibi
+    # bölüme dahil oluyordu) sadece TAMAMLANMIŞ günler baz alınıyor.
     cursor.execute(f"""
         SELECT COUNT(*) * 1.0 / COUNT(DISTINCT date(time_entered_yard)) as avg_per_day
         FROM gate_transactions
-        WHERE transaction_status != 'CANCEL' AND time_entered_yard IS NOT NULL{facility_clause}
+        WHERE transaction_status != 'CANCEL' AND time_entered_yard IS NOT NULL
+          AND date(time_entered_yard) < date('now'){facility_clause}
     """, params)
     avg_row = cursor.fetchone()
     avg_per_day = round(avg_row["avg_per_day"], 1) if avg_row["avg_per_day"] is not None else None
@@ -1308,10 +1312,16 @@ def get_facility_activity_breakdown():
     karşılaştırılabilsinler (bkz. get_status_with_trend'deki aynı mantık)."""
     conn = get_connection()
     cursor = conn.cursor()
+    # avg_entries_per_day sadece TAMAMLANMIŞ günleri sayıyor (bugün henüz
+    # bitmediği için yarım günlük veri tam günmüş gibi bölüme girip ortalamayı
+    # düşük göstermesin diye) — current_in_yard ise bu kısıtlamadan bağımsız,
+    # bugün girenler dahil sahadaki TÜM konteynerleri sayıyor.
     cursor.execute("""
         SELECT
             facility_id,
-            COUNT(*) * 1.0 / COUNT(DISTINCT date(time_entered_yard)) as avg_entries_per_day,
+            SUM(CASE WHEN date(time_entered_yard) < date('now') THEN 1 ELSE 0 END) * 1.0
+                / NULLIF(COUNT(DISTINCT CASE WHEN date(time_entered_yard) < date('now') THEN date(time_entered_yard) END), 0)
+                as avg_entries_per_day,
             SUM(CASE WHEN time_exited_yard IS NULL THEN 1 ELSE 0 END) as current_in_yard
         FROM gate_transactions
         WHERE transaction_status != 'CANCEL' AND facility_id IS NOT NULL AND time_entered_yard IS NOT NULL
@@ -1323,7 +1333,10 @@ def get_facility_activity_breakdown():
     return [
         {
             "facility_id": fid,
-            "avg_entries_per_day": round(by_facility[fid]["avg_entries_per_day"], 1),
+            "avg_entries_per_day": (
+                round(by_facility[fid]["avg_entries_per_day"], 1)
+                if by_facility[fid]["avg_entries_per_day"] is not None else 0
+            ),
             "current_in_yard": by_facility[fid]["current_in_yard"],
         }
         for fid in list_known_facilities() if fid in by_facility

@@ -278,24 +278,42 @@ function formatActivityDate(value) {
 }
 
 .facility-select-row select {
+  color-scheme: dark;
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 8px;
+  border-radius: 14px;
   color: white;
   padding: 0.5rem 0.7rem;
   font-size: 0.9rem;
   outline: none;
+  scrollbar-width: thin;
+  scrollbar-color: #2c5f85 #0c2438;
+}
+
+.facility-select-row select::-webkit-scrollbar {
+  width: 10px;
+}
+.facility-select-row select::-webkit-scrollbar-track {
+  background: #0c2438;
+}
+.facility-select-row select::-webkit-scrollbar-thumb {
+  background: #2c5f85;
+  border-radius: 6px;
+  border: 2px solid #0c2438;
+}
+.facility-select-row select::-webkit-scrollbar-thumb:hover {
+  background: #4a86ad;
 }
 
 .facility-select-row select option {
-  color: #0b1a2b;
-  background: #ffffff;
+  color: #ffffff;
+  background: #0c2438;
 }
 
-/* Harita dropdown'undaki gruplamayla aynı mantık (bkz. facility.js
-   LIGHT_SHADE_FACILITIES) — burada beyaz zemin üstünde hafif gri. */
+/* Harita dropdown'uyla aynı renkler (bkz. facility.js LIGHT_SHADE_FACILITIES,
+   OceanMap.vue .port-dropdown select option.option-light-shade). */
 .facility-select-row select option.option-light-shade {
-  background: #d8dde2;
+  background: #1d3346;
 }
 
 .empty-note {

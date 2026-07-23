@@ -104,7 +104,6 @@ function handleLogout() {
         <div v-show="activeTab === 'chat'" class="chat-tab-area">
           <ChatWidget v-if="isAuthenticated" :token="authToken" :is-admin="isAdmin" />
           <div v-else class="chat-locked">
-            <div class="chat-locked-icon">🔒💬</div>
             <h3>{{ t('chatLockedTitle') }}</h3>
             <p>{{ t('chatLockedText') }}</p>
             <button class="login-cta" @click="handleLogout">{{ t('loginNav') }}</button>
@@ -152,10 +151,6 @@ function handleLogout() {
   color: #e2e8f0;
   font-family: 'Segoe UI', system-ui, sans-serif;
   background: linear-gradient(180deg, #0c2438 0%, #051627 100%);
-}
-
-.chat-locked-icon {
-  font-size: 2.2rem;
 }
 
 .chat-locked h3 {
