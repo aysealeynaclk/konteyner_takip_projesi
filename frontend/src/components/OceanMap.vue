@@ -67,11 +67,15 @@ function selectFacility(code) {
 
 // Dropdown'dan bir liman seçildiğinde: haritayı o ülkeye odaklar (tıklamayla
 // aynı davranış — detay paneli, zoom, hava durumu) ve limanı seçili yapar.
-// Önceki sürümde önce dünya görünümüne dönüp oradan yeni limana gidiyordu;
-// bu hem geçişi (10+ saniye) gereksiz uzatıyordu hem de art arda hızlı
-// seçimlerde önceki isteğin gecikmiş adımları yeni seçimin üstüne biniyordu.
-// Şimdi tek adımda, mevcut konumdan doğrudan hedef ülkeye akıcı bir
-// fitBounds animasyonuyla gidiliyor — süre her zaman aynı ve öngörülebilir.
+// Kullanıcı isteği üzerine iki adımlı geçişe dönüldü: önce dünya görünümüne
+// yumuşakça uzaklaşılır, sonra oradan seçilen ülkeye yakınlaşılır — bir
+// ülkedeyken direkt başka bir ülkeye "atlamak" (özellikle uzak ülkeler
+// arasında) kopuk/bozuk hissettiriyordu. Art arda hızlı seçimlerde sadece
+// EN SON çağrının 2. adımı (ülkeye yakınlaşma) gerçekten tetiklenir; ara
+// adımlar sessizce no-op olur (bkz. focusRequestId), böylece eski
+// senkronizasyon hatası (harita 2 seçim arasında gidip geliyordu) geri
+// gelmez.
+const WORLD_RESET_DURATION = 1.1 // saniye, resetWorldView animasyonunun süresi
 function focusOnFacility(code) {
   if (!code) return
   const portName = FACILITY_TO_PORT_NAME[code]
@@ -85,6 +89,12 @@ function focusOnFacility(code) {
   // Art arda hızlı liman seçilirse sadece EN SON istek gerçekten çalışsın.
   const myRequestId = ++focusRequestId
 
+  // 1. adım: mevcut konumdan dünya görünümüne yumuşakça uzaklaş.
+  resetWorldView(mapInstance, { animate: true, duration: WORLD_RESET_DURATION })
+
+  // 2. adım: dünya görünümü animasyonu bittikten hemen sonra hedef ülkeye
+  // yakınlaş (layer'ın kendi click handler'ı fitBounds + detay panelini
+  // açar, bkz. yukarısı).
   setTimeout(() => {
     if (myRequestId !== focusRequestId) return
     layer.fire('click')
@@ -94,7 +104,7 @@ function focusOnFacility(code) {
     // görünüyor, elle sürükleyince düzeliyordu). invalidateSize bunu her
     // seferinde zorla yeniden hesaplatıp düzeltir.
     setTimeout(() => mapInstance.invalidateSize(), 2400)
-  }, 50)
+  }, WORLD_RESET_DURATION * 1000 + 100)
 }
 
 const mapContainer = ref(null)

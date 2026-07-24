@@ -725,7 +725,10 @@ Kullanıcılar sana konteynerlerin giriş/çıkış zamanları, durumu (limanda 
 geçirdiği süre, hasar durumu veya yük tipi hakkında Türkçe sorular soracak.
 
 Uygun fonksiyonu çağırarak veritabanından veriyi çek, sonra kullanıcıya
-doğal, akıcı ve insana hitap eden bir Türkçe cümleyle açıkla.
+doğal, akıcı ve insana hitap eden bir Türkçe cümleyle açıkla. ASLA kendi
+kafandan sayı/veri uydurma (aşağıda "ASLA SAYI UYDURMA" kuralına bak) ve
+cevabını her zaman sıcak, kibar, insancıl bir dille ver — soğuk, robotik
+veya bürokratik bir üslup kullanma.
 
 Fonksiyonların döndürdüğü kayıtlarda şu ham alanlar bulunur, bunları
 yorumlayıp doğal Türkçe'ye çevirerek anlat:
@@ -778,6 +781,18 @@ yorumlayıp doğal Türkçe'ye çevirerek anlat:
     - "Şu anda limanda 5 konteyner var: ..."
 - Konteyner bulunamazsa ("NOT_FOUND") nazikçe belirt, hata gibi gösterme.
 - Kısa ve net cevap ver, gereksiz teknik detay verme, resmi ama samimi bir dil kullan.
+- KRİTİK KURAL — ASLA SAYI UYDURMA: Cevabındaki her sayı (saat, adet, dakika,
+  yüzde vb.) MUTLAKA bir fonksiyonun döndürdüğü değer olmalı; kendi tahminini,
+  yuvarlamanı veya "mantıklı görünen" bir sayıyı ASLA yazma. Bir fonksiyon boş
+  liste veya "veri yok" dönerse, bunun için uydurma bir sayı/saat üretme —
+  "bu konuda henüz/hiç veri yok" de. Özellikle "bugün" gibi belirli bir güne
+  özel sorularda, o güne özel veri yoksa bunu açıkça söyle, tüm zamanların
+  genel istatistiğini o güne aitmiş gibi sunma.
+- KİBAR VE İNSANCIL DİL: cevabın her zaman sıcak, nazik, karşındaki insanla
+  konuşuyormuş gibi bir üslupla yazılsın — kuru, listeleme gibi, robotik veya
+  "sistem çıktısı" hissi veren bir dil kullanma. Gerekirse kısa bir selamlama/
+  nezaket ifadesi (örn. "Tabii,", "Elbette,") ile başlayabilirsin, ama
+  yapmacık veya abartılı olmasın.
 
 Genel sohbet kuralları:
 - Kullanıcı "merhaba", "nasılsın", "teşekkürler", "iyi günler" gibi normal bir
@@ -797,6 +812,9 @@ range, their location in the yard, damage status, or freight type.
 
 Call the appropriate function to fetch the data from the database, then
 explain it to the user in a natural, fluent, human-friendly English sentence.
+NEVER make up numbers or data yourself (see the "NEVER MAKE UP NUMBERS" rule
+below), and always answer in a warm, polite, human tone — never cold,
+robotic, or bureaucratic.
 
 The records returned by the functions contain these raw fields — interpret
 them and explain in natural English:
@@ -851,6 +869,18 @@ Wording rules:
 - If a container isn't found ("NOT_FOUND"), state it gently, not like an error.
 - Keep answers short and to the point, avoid unnecessary technical detail,
   use a professional but friendly tone.
+- CRITICAL RULE — NEVER MAKE UP NUMBERS: every number in your reply (hour,
+  count, minutes, percentage, etc.) MUST come directly from a function's
+  return value; never write your own estimate, rounding, or a number that
+  "sounds plausible". If a function returns an empty list or no data, do NOT
+  invent a number/hour for it — say there's no data yet. Especially for
+  questions scoped to a specific day like "today", if there's no data for
+  that specific day, say so explicitly rather than presenting the all-time
+  statistic as if it were today's.
+- POLITE, HUMAN TONE: always write as if speaking warmly to a real person —
+  not a dry list, not robotic, not like raw "system output". A brief,
+  natural courtesy opener (e.g. "Sure,", "Of course,") is fine if it fits,
+  but don't force it or overdo it.
 
 General conversation rules:
 - If the user says something conversational like "hello", "how are you",
@@ -861,6 +891,26 @@ General conversation rules:
   user asks a follow-up like "so when did it exit?" in the same chat, infer
   which container they mean from earlier messages, don't ask again.
 """
+
+
+def strip_markdown_emphasis(text: str) -> str:
+    """LLM'in prompt'taki 'ASLA markdown kullanma' talimatına rağmen ara sıra
+    **kalın**, *italik* veya # başlık yazması oluyor; cevap frontend'de düz
+    metin olarak gösterildiği için bu işaretler kullanıcıya olduğu gibi
+    (yıldız/diyez karakterleriyle) görünüyordu. Prompt uyumuna güvenmek yerine
+    son bir güvenlik katmanı olarak burada koddan temizleniyor."""
+    if not text:
+        return text
+    # **kalın** / __kalın__ -> kalın
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'__(.+?)__', r'\1', text)
+    # Kalan tekil yıldız/alt çizgi işaretlerini (italik denemeleri, ya da
+    # eşleşmemiş kalan **'ler) olduğu gibi sil.
+    text = text.replace('**', '').replace('*', '')
+    # Satır başındaki "# Başlık" işaretleri
+    text = re.sub(r'(?m)^#{1,6}\s*', '', text)
+    return text
+
 
 # Cerebras/OpenAI formatı, fonksiyon şemalarını JSON olarak elle tanımlıyoruz
 TOOLS = [
@@ -916,6 +966,7 @@ TOOLS = [
                 "properties": {
                     "start_date": {"type": "string", "description": "Başlangıç tarihi YYYY-MM-DD formatında"},
                     "end_date": {"type": "string", "description": "Bitiş tarihi YYYY-MM-DD formatında"},
+                    "all_facilities": {"type": "boolean", "description": "true ise sadece seçili/geçerli limanı değil, TÜM limanları birlikte kapsar. Kullanıcı 'tüm limanlarda', 'genel olarak', 'hangi liman olursa olsun' gibi bir şey derse veya soru limana özel değilse bunu true yap."},
                 },
                 "required": ["start_date", "end_date"],
             },
@@ -926,6 +977,46 @@ TOOLS = [
         "function": {
             "name": "list_containers_in_yard",
             "description": "Şu anda limanda olan konteynerleri listeler. Sonuç {total_count, records, note} şeklindedir: total_count GERÇEK toplam sayıdır ('kaç konteyner var' gibi sorularda bunu kullan), records ise en son 25 kaydı içerir (her kayıtta loc_name, truck_visit_minutes_in_yard, transaction_type, damage, freight_kind de bulunur).",
+            "parameters": {"type": "object", "properties": {"all_facilities": {"type": "boolean", "description": "true ise sadece seçili/geçerli limanı değil, TÜM limanları birlikte kapsar. Kullanıcı 'tüm limanlarda', 'genel olarak', 'hangi liman olursa olsun' gibi bir şey derse veya soru limana özel değilse bunu true yap."}}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_last_entered_container",
+            "description": "Sahaya EN SON giriş yapan konteynerin kaydını döner (container_no dahil). 'Son giren konteyner hangisi', 'en son hangi konteyner girdi' gibi sorularda kullanılır.",
+            "parameters": {"type": "object", "properties": {"all_facilities": {"type": "boolean", "description": "true ise sadece seçili/geçerli limanı değil, TÜM limanları birlikte kapsar. Kullanıcı 'tüm limanlarda', 'genel olarak', 'hangi liman olursa olsun' gibi bir şey derse veya soru limana özel değilse bunu true yap."}}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_last_exited_container",
+            "description": "Sahadan EN SON çıkış yapan konteynerin kaydını döner (container_no dahil). 'Son çıkış yapan konteyner hangisi', 'en son hangi konteyner çıktı' gibi sorularda kullanılır.",
+            "parameters": {"type": "object", "properties": {"all_facilities": {"type": "boolean", "description": "true ise sadece seçili/geçerli limanı değil, TÜM limanları birlikte kapsar. Kullanıcı 'tüm limanlarda', 'genel olarak', 'hangi liman olursa olsun' gibi bir şey derse veya soru limana özel değilse bunu true yap."}}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_longest_waiting_container",
+            "description": "Sahada hâlâ bulunan (çıkışı yapılmamış) konteynerlerden EN UZUN süredir bekleyeni döner (container_no ve minutes_waiting_so_far dahil). 'En uzun süredir bekleyen konteyner hangisi', 'hangi konteyner en çok bekliyor' gibi sorularda kullanılır.",
+            "parameters": {"type": "object", "properties": {"all_facilities": {"type": "boolean", "description": "true ise sadece seçili/geçerli limanı değil, TÜM limanları birlikte kapsar. Kullanıcı 'tüm limanlarda', 'genel olarak', 'hangi liman olursa olsun' gibi bir şey derse veya soru limana özel değilse bunu true yap."}}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_damaged_containers_summary",
+            "description": "Hasarlı (damage=1) konteynerlerin toplam sayısını (total_count) ve örnek kayıtlarını (records, en fazla 25) döner. 'Kaç hasarlı konteyner var', 'hasarlı konteynerler hangileri' gibi sorularda kullanılır.",
+            "parameters": {"type": "object", "properties": {"all_facilities": {"type": "boolean", "description": "true ise sadece seçili/geçerli limanı değil, TÜM limanları birlikte kapsar. Kullanıcı 'tüm limanlarda', 'genel olarak', 'hangi liman olursa olsun' gibi bir şey derse veya soru limana özel değilse bunu true yap."}}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_facility_activity_breakdown",
+            "description": "TÜM limanların günlük ortalama giriş sayısını (avg_entries_per_day) ve şu an sahalarında kaç konteyner olduğunu (current_in_yard) karşılaştırmalı olarak döner. 'Hangi liman en yoğun', 'limanları karşılaştır' gibi sorularda kullanılır. NOT: tek bir limana özel değildir, her zaman tüm limanların listesini döner.",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -933,8 +1024,16 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_busy_hours",
-            "description": "Limandaki saat bazlı giriş yoğunluğunu/trafiğini hesaplar. Hangi saatlerde en çok konteyner girişi olduğu, en yoğun saatten en az yoğuna sıralı şekilde döner (saat: 0-23, entry_count: o saatteki toplam giriş sayısı). 'Hangi saatler yoğun', 'en yoğun saat kaç', 'trafik ne zaman az' gibi sorularda kullanılır.",
-            "parameters": {"type": "object", "properties": {}},
+            "description": "Limandaki saat bazlı giriş yoğunluğunu/trafiğini TÜM GEÇMİŞ VERİ üzerinden hesaplar (belirli bir güne özel DEĞİLDİR). Hangi saatlerde genelde/tipik olarak en çok konteyner girişi olduğu, en yoğun saatten en az yoğuna sıralı şekilde döner (saat: 0-23, entry_count: o saatteki TÜM ZAMANLARIN toplam giriş sayısı). 'Genelde hangi saatler yoğun', 'tipik olarak en yoğun saat kaç' gibi sorularda kullanılır. Kullanıcı özellikle 'BUGÜN' diye sorarsa bunun yerine get_today_busy_hours kullanılmalı, bu fonksiyonun sonucu 'bugün' diye sunulmamalı.",
+            "parameters": {"type": "object", "properties": {"all_facilities": {"type": "boolean", "description": "true ise sadece seçili/geçerli limanı değil, TÜM limanları birlikte kapsar. Kullanıcı 'tüm limanlarda', 'genel olarak', 'hangi liman olursa olsun' gibi bir şey derse veya soru limana özel değilse bunu true yap."}}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_today_busy_hours",
+            "description": "SADECE bugüne ait saat bazlı giriş dağılımını döner (saat: 0-23, entry_count). Kullanıcı 'bugün en yoğun saat hangisiydi', 'bugün trafik nasıldı' gibi BUGÜN'e özel bir şey sorduğunda kullanılır. Boş liste dönerse bugün için hiç kayıt yok demektir — bu durumda ASLA sayı uydurma, kullanıcıya bugün için henüz veri/giriş olmadığını açıkça söyle.",
+            "parameters": {"type": "object", "properties": {"all_facilities": {"type": "boolean", "description": "true ise sadece seçili/geçerli limanı değil, TÜM limanları birlikte kapsar. Kullanıcı 'tüm limanlarda', 'genel olarak', 'hangi liman olursa olsun' gibi bir şey derse veya soru limana özel değilse bunu true yap."}}},
         },
     },
     {
@@ -942,7 +1041,7 @@ TOOLS = [
         "function": {
             "name": "get_weekday_density",
             "description": "Haftanın hangi gününde (Pazartesi-Pazar) en çok giriş olduğunu hesaplar, en yoğun günden en az yoğuna sıralı döner. 'Hangi gün daha yoğun', 'haftanın en yoğun günü' gibi sorularda kullanılır.",
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {"type": "object", "properties": {"all_facilities": {"type": "boolean", "description": "true ise sadece seçili/geçerli limanı değil, TÜM limanları birlikte kapsar. Kullanıcı 'tüm limanlarda', 'genel olarak', 'hangi liman olursa olsun' gibi bir şey derse veya soru limana özel değilse bunu true yap."}}},
         },
     },
     {
@@ -950,7 +1049,7 @@ TOOLS = [
         "function": {
             "name": "get_monthly_density",
             "description": "Hangi ayda/mevsimde en çok giriş olduğunu hesaplar, en yoğundan en az yoğuna sıralı döner. 'Hangi ay yoğun', 'mevsimsel yoğunluk nasıl' gibi sorularda kullanılır.",
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {"type": "object", "properties": {"all_facilities": {"type": "boolean", "description": "true ise sadece seçili/geçerli limanı değil, TÜM limanları birlikte kapsar. Kullanıcı 'tüm limanlarda', 'genel olarak', 'hangi liman olursa olsun' gibi bir şey derse veya soru limana özel değilse bunu true yap."}}},
         },
     },
     {
@@ -961,7 +1060,8 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "period": {"type": "string", "enum": ["week", "month"], "description": "Karşılaştırma dönemi: 'week' (son 7 gün) veya 'month' (son 30 gün)"}
+                    "period": {"type": "string", "enum": ["week", "month"], "description": "Karşılaştırma dönemi: 'week' (son 7 gün) veya 'month' (son 30 gün)"},
+                    "all_facilities": {"type": "boolean", "description": "true ise sadece seçili/geçerli limanı değil, TÜM limanları birlikte kapsar. Kullanıcı 'tüm limanlarda', 'genel olarak', 'hangi liman olursa olsun' gibi bir şey derse veya soru limana özel değilse bunu true yap."}
                 },
                 "required": ["period"],
             },
@@ -972,7 +1072,7 @@ TOOLS = [
         "function": {
             "name": "get_dwell_time_stats",
             "description": "Konteynerlerin limanda/sahada ortalama, en kısa ve en uzun kalış süresini (dakika cinsinden) hesaplar. 'Ortalama kalış süresi ne kadar', 'konteynerler ne kadar kalıyor' gibi sorularda kullanılır.",
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {"type": "object", "properties": {"all_facilities": {"type": "boolean", "description": "true ise sadece seçili/geçerli limanı değil, TÜM limanları birlikte kapsar. Kullanıcı 'tüm limanlarda', 'genel olarak', 'hangi liman olursa olsun' gibi bir şey derse veya soru limana özel değilse bunu true yap."}}},
         },
     },
     {
@@ -980,7 +1080,7 @@ TOOLS = [
         "function": {
             "name": "get_status_with_trend",
             "description": "Şu anki liman doluluğunu (sahada kaç konteyner var) ve bugünkü giriş sayısının geçmiş günlük ortalamaya göre nasıl olduğunu birlikte döner. 'Şu an durum nasıl', 'normalden yoğun muyuz' gibi sorularda kullanılır.",
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {"type": "object", "properties": {"all_facilities": {"type": "boolean", "description": "true ise sadece seçili/geçerli limanı değil, TÜM limanları birlikte kapsar. Kullanıcı 'tüm limanlarda', 'genel olarak', 'hangi liman olursa olsun' gibi bir şey derse veya soru limana özel değilse bunu true yap."}}},
         },
     },
 ]
@@ -1061,6 +1161,96 @@ def get_container_status(container_no: str, facility_id: Optional[str] = None):
     return {"status": status, "record": record}
 
 
+def get_last_entered_container(facility_id: Optional[str] = None):
+    """Sahaya EN SON giriş yapan konteynerin kaydını döner (iptal edilmiş
+    kayıtlar hariç). 'Son giren konteyner hangisi' gibi sorularda kullanılır."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    facility_clause = " AND facility_id = ?" if facility_id else ""
+    params = (facility_id,) if facility_id else ()
+    cursor.execute(f"""
+        SELECT {_GATE_COLUMNS}
+        FROM gate_transactions
+        WHERE transaction_status != 'CANCEL' AND time_entered_yard IS NOT NULL{facility_clause}
+        ORDER BY time_entered_yard DESC
+        LIMIT 1
+    """, params)
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_last_exited_container(facility_id: Optional[str] = None):
+    """Sahadan EN SON çıkış yapan konteynerin kaydını döner (iptal edilmiş
+    kayıtlar hariç). 'Son çıkış yapan konteyner hangisi' gibi sorularda kullanılır."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    facility_clause = " AND facility_id = ?" if facility_id else ""
+    params = (facility_id,) if facility_id else ()
+    cursor.execute(f"""
+        SELECT {_GATE_COLUMNS}
+        FROM gate_transactions
+        WHERE transaction_status != 'CANCEL' AND time_exited_yard IS NOT NULL{facility_clause}
+        ORDER BY time_exited_yard DESC
+        LIMIT 1
+    """, params)
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_longest_waiting_container(facility_id: Optional[str] = None):
+    """Sahada hâlâ bulunan (çıkışı yapılmamış) konteynerlerden EN UZUN
+    süredir bekleyeni döner, şu ana kadar kaç dakikadır beklediğini de
+    hesaplar. 'En uzun süredir bekleyen konteyner hangisi' gibi sorularda
+    kullanılır."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    facility_clause = " AND facility_id = ?" if facility_id else ""
+    params = (facility_id,) if facility_id else ()
+    cursor.execute(f"""
+        SELECT {_GATE_COLUMNS}
+        FROM gate_transactions
+        WHERE transaction_status != 'CANCEL' AND time_exited_yard IS NULL{facility_clause}
+        ORDER BY time_entered_yard ASC
+        LIMIT 1
+    """, params)
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    record = dict(row)
+    entered = datetime.fromisoformat(record["time_entered_yard"])
+    record["minutes_waiting_so_far"] = round((datetime.now() - entered).total_seconds() / 60, 1)
+    return record
+
+
+def get_damaged_containers_summary(facility_id: Optional[str] = None):
+    """Hasarlı (damage=1) konteynerlerin toplam sayısını ve en fazla 25 örnek
+    kaydını döner (iptal edilmiş kayıtlar hariç). 'Kaç hasarlı konteyner var',
+    'hasarlı konteynerler hangileri' gibi sorularda kullanılır."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    facility_clause = " AND facility_id = ?" if facility_id else ""
+    params = (facility_id,) if facility_id else ()
+    cursor.execute(f"""
+        SELECT {_GATE_COLUMNS}
+        FROM gate_transactions
+        WHERE damage = 1 AND transaction_status != 'CANCEL'{facility_clause}
+        ORDER BY time_entered_yard DESC
+    """, params)
+    all_records = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return {
+        "total_count": len(all_records),
+        "records": all_records[:_MAX_SAMPLE_RECORDS],
+        "note": (
+            f"Sadece ilk {_MAX_SAMPLE_RECORDS} kayıt gösteriliyor; gerçek toplam sayı total_count alanındadır."
+            if len(all_records) > _MAX_SAMPLE_RECORDS else None
+        ),
+    }
+
+
 # LLM'e (özellikle Groq'un dakikalık token limitine) gönderilen tool
 # sonuçlarının çok büyümesini önlemek için liste döndüren fonksiyonlar tüm
 # kayıtları değil, gerçek toplam sayı + sınırlı sayıda örnek kayıt döner.
@@ -1123,8 +1313,10 @@ def list_containers_in_yard(facility_id: Optional[str] = None):
 
 def get_busy_hours(facility_id: Optional[str] = None):
     """Saat bazında (0-23) giriş yoğunluğunu hesaplar; en yoğun saatten en
-    az yoğuna sıralı döner. Hangi saatlerde en çok konteyner girişi olduğunu
-    (yoğunluk/trafik) belirlemek için kullanılır."""
+    az yoğuna sıralı döner. TÜM GEÇMİŞ VERİYİ kapsar (belirli bir güne özel
+    değildir) — 'genelde/tipik olarak hangi saatler yoğun' gibi sorularda
+    kullanılır. Kullanıcı özellikle BUGÜN'ü soruyorsa bunun yerine
+    get_today_busy_hours kullanılmalı."""
     conn = get_connection()
     cursor = conn.cursor()
     facility_clause = " AND facility_id = ?" if facility_id else ""
@@ -1133,6 +1325,27 @@ def get_busy_hours(facility_id: Optional[str] = None):
         SELECT CAST(strftime('%H', time_entered_yard) AS INTEGER) as hour, COUNT(*) as entry_count
         FROM gate_transactions
         WHERE transaction_status != 'CANCEL' AND time_entered_yard IS NOT NULL{facility_clause}
+        GROUP BY hour
+        ORDER BY entry_count DESC
+    """, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"hour": row["hour"], "entry_count": row["entry_count"]} for row in rows]
+
+
+def get_today_busy_hours(facility_id: Optional[str] = None):
+    """SADECE bugüne ait saat bazlı giriş dağılımını hesaplar. Bugün hiç
+    giriş yoksa boş liste döner — bu durumda veri uydurulmamalı, kullanıcıya
+    bugün için henüz kayıt olmadığı açıkça söylenmeli."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    facility_clause = " AND facility_id = ?" if facility_id else ""
+    params = (facility_id,) if facility_id else ()
+    cursor.execute(f"""
+        SELECT CAST(strftime('%H', time_entered_yard) AS INTEGER) as hour, COUNT(*) as entry_count
+        FROM gate_transactions
+        WHERE transaction_status != 'CANCEL' AND time_entered_yard IS NOT NULL
+          AND date(time_entered_yard) = date('now'){facility_clause}
         GROUP BY hour
         ORDER BY entry_count DESC
     """, params)
@@ -1691,7 +1904,13 @@ AVAILABLE_FUNCTIONS = {
     "get_container_status": get_container_status,
     "get_containers_by_date_range": get_containers_by_date_range,
     "list_containers_in_yard": list_containers_in_yard,
+    "get_last_entered_container": get_last_entered_container,
+    "get_last_exited_container": get_last_exited_container,
+    "get_longest_waiting_container": get_longest_waiting_container,
+    "get_damaged_containers_summary": get_damaged_containers_summary,
+    "get_facility_activity_breakdown": get_facility_activity_breakdown,
     "get_busy_hours": get_busy_hours,
+    "get_today_busy_hours": get_today_busy_hours,
     "get_weekday_density": get_weekday_density,
     "get_monthly_density": get_monthly_density,
     "compare_recent_periods": compare_recent_periods,
@@ -1736,11 +1955,19 @@ def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
             facility_hint = (
                 f"\n\nŞu anda seçili/görüntülenen liman: {label}. Kullanıcı 'hangi liman', "
                 f"'neredeyim', 'bu liman neresi' gibi sorular sorarsa bu bilgiyi doğrudan "
-                f"kullan; tüm araç (tool) sonuçları da bu limana ait."
+                f"kullan; tool çağrılarında varsayılan olarak sadece bu limanı kapsar. Ama "
+                f"kullanıcı 'tüm limanlarda', 'genel olarak', 'hangi liman olursa olsun' gibi "
+                f"bir şey derse veya soru açıkça belirli bir limana özel değilse, ilgili "
+                f"tool'u 'all_facilities': true parametresiyle çağır — bu, seçili limanla "
+                f"sınırlamadan TÜM limanları birlikte kapsamasını sağlar."
                 if request.language != "en"
                 else f"\n\nThe currently selected/viewed facility is: {label}. If the user asks "
-                f"'which facility', 'where am I', or similar, use this directly; all tool "
-                f"results also belong to this facility."
+                f"'which facility', 'where am I', or similar, use this directly; by default, "
+                f"tool calls are scoped to this facility only. But if the user says something "
+                f"like 'across all facilities', 'in general', 'any facility', or the question "
+                f"clearly isn't specific to one facility, call the relevant tool with "
+                f"'all_facilities': true — this makes it cover ALL facilities together instead "
+                f"of being limited to the selected one."
             )
         messages = [{"role": "system", "content": system_instruction + name_hint + facility_hint}]
 
@@ -1751,19 +1978,30 @@ def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
         # Yeni kullanıcı mesajını ekle
         messages.append({"role": "user", "content": request.message})
 
-        response = client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=messages,
-            tools=TOOLS,
-        )
+        # Bazı sorular (örn. birden fazla konteyner/varlık sorulması) modelin
+        # birden fazla tool-çağrısı TURU yapmasını gerektirebiliyor (önce
+        # birini sorup sonucu görünce ikincisini sormak isteyebiliyor). Eski
+        # kod tek turluk kurgulanmıştı: ikinci (son) API çağrısına `tools`
+        # hiç gönderilmiyordu, model yine de tool çağırmaya çalışınca Groq
+        # "Tool choice is none, but model called a tool" hatasıyla tüm isteği
+        # reddedip sohbeti çökertiyordu. Şimdi model tool istemeyi bırakana
+        # kadar (ya da güvenlik limitine kadar) `tools` her turda gönderiliyor.
+        MAX_TOOL_ROUNDS = 5
+        reply_text = ""
+        for _ in range(MAX_TOOL_ROUNDS):
+            response = client.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=messages,
+                tools=TOOLS,
+            )
+            response_message = response.choices[0].message
 
-        response_message = response.choices[0].message
-        tool_calls = response_message.tool_calls
+            if not response_message.tool_calls:
+                reply_text = response_message.content or ""
+                break
 
-        if tool_calls:
             messages.append(response_message)
-
-            for tool_call in tool_calls:
+            for tool_call in response_message.tool_calls:
                 function_name = tool_call.function.name
                 function_args = json.loads(tool_call.function.arguments)
                 function_to_call = AVAILABLE_FUNCTIONS[function_name]
@@ -1771,27 +2009,41 @@ def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
                 # (örn. tool şemaları birbirine karışınca); bunları sessizce at,
                 # çökmek yerine sadece geçerli parametrelerle çağır.
                 valid_params = set(inspect.signature(function_to_call).parameters)
+                # "all_facilities" gerçek bir Python parametresi değil, sadece
+                # LLM'in "seçili liman yerine TÜM limanları kapsa" isteğini
+                # belirttiği bir sinyal — fonksiyona geçmeden burada tüketiliyor.
+                wants_all_facilities = bool(function_args.pop("all_facilities", False))
                 function_args = {k: v for k, v in function_args.items() if k in valid_params}
-                function_result = function_to_call(**function_args, facility_id=request.facility_id)
+                # Bazı tool'lar (örn. get_facility_activity_breakdown) hiç
+                # facility_id parametresi almıyor — TÜM limanları karşılaştırmak
+                # onların amacı, o yüzden sadece parametreyi gerçekten kabul
+                # eden fonksiyonlara facility_id ekleniyor. Model "tüm limanlar"
+                # istediyse (all_facilities=true) seçili limanı zorlamıyoruz,
+                # None geçiyoruz — bu da SQL'deki facility filtresinin devre
+                # dışı kalmasını (yani tüm limanları kapsamasını) sağlıyor.
+                if "facility_id" in valid_params:
+                    function_args["facility_id"] = None if wants_all_facilities else request.facility_id
+                function_result = function_to_call(**function_args)
 
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
                     "content": json.dumps(function_result, ensure_ascii=False, default=str),
                 })
-                
+        else:
+            # Güvenlik limiti aşıldı (modelin sonsuza kadar tool çağırmasını
+            # engeller) — elimizdeki bilgilerle tools OLMADAN son bir cevap
+            # zorlanıyor, böylece yine de kullanıcıya bir yanıt dönüyor.
+            final_response = client.chat.completions.create(model=GROQ_MODEL, messages=messages)
+            reply_text = final_response.choices[0].message.content or ""
 
-            second_response = client.chat.completions.create(
-                model=GROQ_MODEL,
-                messages=messages,
-            )
-            reply_text = second_response.choices[0].message.content or ""
-            assistant_messages = (request.history or []) + [ChatMessage(role="user", content=request.message), ChatMessage(role="assistant", content=reply_text)]
-            saved_session = save_chat_session(chat_user["id"], chat_user["username"], [{"role": msg.role, "content": msg.content} for msg in assistant_messages], request.session_id, facility_id=request.facility_id)
-            log_activity(chat_user["id"], "chatbot_query", request.facility_id)
-            return {"reply": reply_text, "session": saved_session}
+        # Sistem talimatında "ASLA markdown kullanma" dense de model ara sıra
+        # **kalın** gibi yıldızlı biçimlendirme yazmaya devam edebiliyor;
+        # cevap ekranda düz metin olarak gösterildiği için bu yıldızlar
+        # olduğu gibi görünüyordu. Prompt'a güvenmek yerine son bir güvenlik
+        # katmanı olarak burada koddan temizleniyor.
+        reply_text = strip_markdown_emphasis(reply_text)
 
-        reply_text = response_message.content or ""
         assistant_messages = (request.history or []) + [ChatMessage(role="user", content=request.message), ChatMessage(role="assistant", content=reply_text)]
         saved_session = save_chat_session(chat_user["id"], chat_user["username"], [{"role": msg.role, "content": msg.content} for msg in assistant_messages], request.session_id, facility_id=request.facility_id)
         log_activity(chat_user["id"], "chatbot_query", request.facility_id)
