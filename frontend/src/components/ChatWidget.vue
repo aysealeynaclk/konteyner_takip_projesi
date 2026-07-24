@@ -249,7 +249,7 @@ watch(hasActiveChat, (locked) => {
         <button class="header-action-btn" @click="toggleHistory">
           <span class="action-icon">↺</span>{{ t('chatHistoryTitle') }}
         </button>
-        <button class="header-action-btn primary" @click="startNewChat">
+        <button class="header-action-btn" @click="startNewChat">
           <span class="action-icon">+</span>{{ t('chatNewChat') }}
         </button>
         <button v-if="isAdmin" class="header-action-btn" @click="toggleAdminPanel">
@@ -498,16 +498,6 @@ watch(hasActiveChat, (locked) => {
 .header-action-btn:hover {
   background: rgba(111, 168, 208, 0.15);
   border-color: rgba(111, 168, 208, 0.55);
-}
-
-.header-action-btn.primary {
-  background: #2c5f85;
-  border-color: #4a86ad;
-  color: white;
-}
-
-.header-action-btn.primary:hover {
-  background: #366f99;
 }
 
 .action-icon {
