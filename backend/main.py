@@ -428,13 +428,13 @@ def get_chat_session(session_id: int, user_id: int):
 
 
 def save_chat_session(user_id: int, username: str, messages, session_id: Optional[int] = None, facility_id: Optional[str] = None):
-    title = _chat_session_title(messages)
     messages_json = json.dumps(messages, ensure_ascii=False)
 
     conn = get_connection()
     cursor = conn.cursor()
 
     if session_id is None:
+        title = _chat_session_title(messages)
         cursor.execute(
             """
             INSERT INTO chat_sessions (user_id, username, title, messages_json, facility_id)
@@ -445,7 +445,7 @@ def save_chat_session(user_id: int, username: str, messages, session_id: Optiona
         session_id = cursor.lastrowid
     else:
         cursor.execute(
-            "SELECT id, facility_id FROM chat_sessions WHERE id = ? AND user_id = ?",
+            "SELECT id, facility_id, title FROM chat_sessions WHERE id = ? AND user_id = ?",
             (session_id, user_id),
         )
         existing = cursor.fetchone()
@@ -455,6 +455,15 @@ def save_chat_session(user_id: int, username: str, messages, session_id: Optiona
         # Mevcut sohbetin liman bilgisi zaten varsa korunur (bir sohbet içinde
         # liman değiştirilemez); yoksa (eski kayıtlar) yeni değer atanır.
         facility_id = existing["facility_id"] or facility_id
+        # Başlık için LLM'e sadece sohbet İLK oluşturulurken soruluyor — devam
+        # eden her mesajda _chat_session_title'ı (ve içindeki LLM çağrısını)
+        # yeniden tetiklemek, kullanıcıya cevap dönmeden önce ekstra bir tam
+        # LLM isteği daha bekletiyor ve chatbot'u belirgin şekilde
+        # yavaşlatıyordu. Mevcut başlık korunur; yalnızca sohbette daha önce
+        # geçmemiş bir konteyner numarası ortaya çıkarsa (ucuz regex kontrolü,
+        # LLM çağrısı yok) başlık ona güncellenir.
+        container_no = _find_container_no_in_conversation(messages)
+        title = f"{container_no} Sorgusu" if container_no else existing["title"]
 
         cursor.execute(
             """
